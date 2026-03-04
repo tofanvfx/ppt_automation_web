@@ -37,3 +37,9 @@ layouts.txt
 
 # Large files (optional, but keeping template/content for now)
 # Generated_Presentation.pptx
+
+# Web App specifics
+.venv/
+temp_uploads/
+users.db
+temp_refactor.py
