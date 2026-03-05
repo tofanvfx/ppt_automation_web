@@ -97,7 +97,7 @@ def generate_ppt(docx_path, template_path, output_path):
 
         if name.replace("_", "").lower() in ('sstcontentpage01', 'sstcontentpage1'):
             for layout in prs.slide_layouts:
-                if layout.name == 'LAYOUT_sst_content_page_01':
+                if layout.name == 'LAYOUT_sst_content_page_01' or layout.name == '1_LAYOUT_sst_content_page_01':
                     return layout
 
         if name.replace("_", "").lower() in ('sstsummarypage', 'sstsummary', 'sstsummerypage', 'sstsummery'):
@@ -144,19 +144,20 @@ def generate_ppt(docx_path, template_path, output_path):
 
     # Nested dictionary to store templates per layout
     sst_content_templates = {
-        'LAYOUT_sst_content_page_01': {'topic': None, 'subtopic': None, 'text': None},
-        'LAYOUT_sst_content_page_02': {'topic': None, 'subtopic': None, 'text': None},
-        'LAYOUT_sst_notedown_page': {'text': None},
+        'LAYOUT_sst_content_page_01': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        '1_LAYOUT_sst_content_page_01': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        'LAYOUT_sst_content_page_02': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        'LAYOUT_sst_notedown_page': {'text': [], 'static_elements': []},
         'LAYOUT_sst_quiztime_page_01': {'title': None, 'question': None, 'options': [], 'picture': None},
         'LAYOUT_sst_quiztime_page_02': {'title': None, 'question': None, 'options': [], 'picture': None},
         'LAYOUT_sst_discussion_page': {'question1': None, 'static_elements': []},
         'LAYOUT_sst_homework_page': {'static_elements': []},
         'LAYOUT_syr': {'static_elements': []},
         'LAYOUT_ask_question': {'static_elements': []},
-        'LAYOUT_sst_activity_page_01': {'static_elements': [], 'text': None},
-        'LAYOUT_sst_activity_page_02': {'static_elements': [], 'text': None},
-        'LAYOUT_sst_deafult_page': {'topic': None, 'subtopic': None, 'text': None},
-        'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': None}
+        'LAYOUT_sst_activity_page_01': {'static_elements': [], 'text': []},
+        'LAYOUT_sst_activity_page_02': {'static_elements': [], 'text': []},
+        'LAYOUT_sst_deafult_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []}
     }
 
     # Extract lo_page group shape XML before processing slides
@@ -232,13 +233,13 @@ def generate_ppt(docx_path, template_path, output_path):
                     shape.element.getparent().remove(shape.element)
                     continue
 
-                # 0f. For activity pages, separate static elements from the primary text box
-                if layout.name in ('LAYOUT_sst_activity_page_01', 'LAYOUT_sst_activity_page_02'):
+                # 0f. For activity and content pages, separate static elements from the primary text box
+                if layout.name in ('LAYOUT_sst_activity_page_01', 'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page'):
                     # Exclude Picture Placeholders from extraction so they stay in layout
-                    if shape.is_placeholder and shape.placeholder_format.type == 18:
+                    if getattr(shape, 'is_placeholder', False) and shape.placeholder_format.type == 18:
                         continue
 
-                    if not (shape.has_text_frame and 'text goes here' in shape.text.lower()):
+                    if not (shape.has_text_frame and ('text goes here' in shape.text.lower() or 'topic' in shape.text.lower() or 'subtopic' in shape.text.lower())):
                         templates['static_elements'].append(copy.deepcopy(shape.element))
                         shape.element.getparent().remove(shape.element)
                         continue
@@ -287,7 +288,10 @@ def generate_ppt(docx_path, template_path, output_path):
                         if 'question1' in txt:
                             templates['question1'] = copy.deepcopy(shape.element)
                     else:
-                        templates['text'] = copy.deepcopy(shape.element)
+                        if isinstance(templates.get('text'), list):
+                            templates['text'].append(copy.deepcopy(shape.element))
+                        else:
+                            templates['text'] = copy.deepcopy(shape.element)
                 
                     if shape.element.getparent() is not None:
                         shape.element.getparent().remove(shape.element)
@@ -717,22 +721,32 @@ def generate_ppt(docx_path, template_path, output_path):
                 # If there are no options, vertically and horizontally center the question text
                 if not quiz_data['options']:
                     ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
-                    off = question_elem.find('.//a:off', namespaces=ns)
-                    ext = question_elem.find('.//a:ext', namespaces=ns)
+                    body = question_elem.find('.//a:bodyPr', namespaces=ns)
+                    if body is not None:
+                        # Set vertical alignment to center
+                        body.set('anchor', 'ctr')
+
+                    off = question_elem.find('.//a:xfrm/a:off', namespaces=ns)
+                    ext = question_elem.find('.//a:xfrm/a:ext', namespaces=ns)
                     if off is not None and ext is not None:
                         slide_height = prs.slide_height
                         slide_width = prs.slide_width
                         shape_height = int(ext.get('cy', '0'))
                         shape_width = int(ext.get('cx', '0'))
                     
+                        # Center shape vertically (assuming we want to center the whole box and its text)
+                        # Center Y: taking into account the space available below the title
+                        # But simpler is just center vertically on slide
                         new_y = int((slide_height - shape_height) / 2)
+                        
+                        # Optionally center horizontally (already done by the previous code block)
                         new_x = int((slide_width - shape_width) / 2)
-                    
                         off.set('y', str(new_y))
                         off.set('x', str(new_x))
             
                 slide.shapes._spTree.append(question_elem)
-                replace_text_preserve_format(slide.shapes[-1], quiz_data['question'])
+                # Pass center=True to replace_text_preserve_format if there are no options to center the paragraph text
+                replace_text_preserve_format(slide.shapes[-1], quiz_data['question'], center=not bool(quiz_data['options']))
         
             # Inject options only if they exist
             if quiz_data['options']:
@@ -802,32 +816,62 @@ def generate_ppt(docx_path, template_path, output_path):
                 slide.shapes._spTree.append(subtopic_elem)
                 shape_elements.append(slide.shapes[-1])
             
-            if templates.get('text') is not None:
-                text_elem = copy.deepcopy(templates['text'])
-                # If no subtopic, move the text box to where the subtopic would have been
-                if 'subtopic' not in data and templates.get('subtopic') is not None:
-                    sub_xml = templates['subtopic']
-                    # Search for offset element in subtopic template
-                    # The namespace for 'a' is usually needed
-                    ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
-                    sub_off = sub_xml.find('.//a:off', namespaces=ns)
-                    text_off = text_elem.find('.//a:off', namespaces=ns)
+            if templates.get('static_elements'):
+                for static_elem in templates['static_elements']:
+                    slide.shapes._spTree.append(copy.deepcopy(static_elem))
+
+            if templates.get('text') is not None and len(templates['text']) > 0:
+                texts = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
+                for text_elem_xml in texts:
+                    text_elem = copy.deepcopy(text_elem_xml)
+                    # If no subtopic, move the text box to where the subtopic would have been
+                    if 'subtopic' not in data and templates.get('subtopic') is not None:
+                        sub_xml = templates['subtopic']
+                        # Search for offset element in subtopic template
+                        # The namespace for 'a' is usually needed
+                        ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
+                        sub_off = sub_xml.find('.//a:off', namespaces=ns)
+                        text_off = text_elem.find('.//a:off', namespaces=ns)
+                    
+                        if sub_off is not None and text_off is not None:
+                            # Move text to subtopic's Y coordinate
+                            text_off.set('y', sub_off.get('y'))
                 
-                    if sub_off is not None and text_off is not None:
-                        # Move text to subtopic's Y coordinate
-                        text_off.set('y', sub_off.get('y'))
-            
-                slide.shapes._spTree.append(text_elem)
-                shape_elements.append(slide.shapes[-1])
+                    slide.shapes._spTree.append(text_elem)
+                    shape_elements.append(slide.shapes[-1])
         
             # Insert text and subtexts
-            for shape in shape_elements:
-                if shape.has_text_frame:
-                    shape_text = shape.text
-                    if 'Text goes here' in shape_text:
-                        if 'text' in data:
-                            replace_text_preserve_format(shape, data['text'], font_color=RGBColor(255, 255, 255))
             
+            # Extract text shapes to distribute paragraphs among them
+            text_shapes = []
+            for s in shape_elements:
+                if getattr(s, 'shape_type', None) == 6:  # msoGroup
+                    for sub in s.shapes:
+                        if getattr(sub, 'has_text_frame', False) and 'Text goes here' in sub.text:
+                            text_shapes.append(sub)
+                elif getattr(s, 'has_text_frame', False) and 'Text goes here' in s.text:
+                    text_shapes.append(s)
+                    
+            if text_shapes and 'text' in data:
+                paragraphs = data['text']
+                if len(text_shapes) > 1 and len(paragraphs) > 1:
+                    # Distribute paragraphs across text shapes evenly
+                    from math import ceil
+                    chunk_size = ceil(len(paragraphs) / len(text_shapes))
+                    for idx, shape in enumerate(text_shapes):
+                        chunk = paragraphs[idx * chunk_size : (idx + 1) * chunk_size]
+                        if chunk:
+                            replace_text_preserve_format(shape, chunk, font_color=RGBColor(255, 255, 255))
+                        else:
+                            replace_text_preserve_format(shape, "", font_color=RGBColor(255, 255, 255))
+                else:
+                    # Only one text shape or one paragraph, put everything in the first shape and clear others
+                    replace_text_preserve_format(text_shapes[0], paragraphs, font_color=RGBColor(255, 255, 255))
+                    for shape in text_shapes[1:]:
+                        replace_text_preserve_format(shape, "", font_color=RGBColor(255, 255, 255))
+
+            for shape in shape_elements:
+                # We already replaced 'Text goes here'
                 # Check for topic/subtopic either as standalone shape or inside group
                 is_group = (getattr(shape, 'shape_type', None) == 6)
                 targets = shape.shapes if is_group else [shape]
@@ -932,9 +976,12 @@ def generate_ppt(docx_path, template_path, output_path):
                 text_content.append(content_obj)
 
             if templates.get('text') is not None:
-                text_elem = copy.deepcopy(templates['text'])
-                slide.shapes._spTree.append(text_elem)
-                shape = slide.shapes[-1]
+                # Due to templates.get('text') being a list, pick the first text box.
+                text_xmls = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
+                if text_xmls:
+                    text_elem = copy.deepcopy(text_xmls[0])
+                    slide.shapes._spTree.append(text_elem)
+                    shape = slide.shapes[-1]
                 # Force black text for activity boxes if they are yellow
                 replace_text_preserve_format(shape, text_content, font_color=RGBColor(0, 0, 0))
             
@@ -1072,9 +1119,11 @@ def generate_ppt(docx_path, template_path, output_path):
         elif layout.name == 'LAYOUT_sst_notedown_page':
             templates = sst_content_templates.get(layout.name, {})
             if templates.get('text') is not None:
-                text_elem = copy.deepcopy(templates['text'])
-                slide.shapes._spTree.append(text_elem)
-                shape = slide.shapes[-1]
+                text_xmls = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
+                if text_xmls:
+                    text_elem = copy.deepcopy(text_xmls[0])
+                    slide.shapes._spTree.append(text_elem)
+                    shape = slide.shapes[-1]
             
                 processed_content = []
                 for entry in section['content']:
