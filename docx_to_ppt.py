@@ -22,7 +22,17 @@ def generate_ppt(docx_path, template_path, output_path):
     doc = Document(docx_path)
 
     def clean(text):
-        return text.strip().lower()
+        return re.sub(r'[^a-z0-9]', '', text.strip().lower())
+
+    global_metadata = {
+        'class': '',
+        'subject': '',
+        'chapter number': '',
+        'chapter name': '',
+        'lesson': '',
+        'topic': '',
+        'subtopic': ''
+    }
 
     def get_text(entry):
         """Extract plain text from a content entry (either a string or a (text_parts, ilvl) tuple)."""
@@ -147,7 +157,7 @@ def generate_ppt(docx_path, template_path, output_path):
         'LAYOUT_sst_content_page_01': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         '1_LAYOUT_sst_content_page_01': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_sst_content_page_02': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
-        'LAYOUT_sst_notedown_page': {'text': [], 'static_elements': []},
+        'LAYOUT_sst_notedown_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_sst_quiztime_page_01': {'title': None, 'question': None, 'options': [], 'picture': None},
         'LAYOUT_sst_quiztime_page_02': {'title': None, 'question': None, 'options': [], 'picture': None},
         'LAYOUT_sst_discussion_page': {'question1': None, 'static_elements': []},
@@ -201,6 +211,7 @@ def generate_ppt(docx_path, template_path, output_path):
                 has_topic = False
                 has_subtopic = False
                 has_quiz_title = False
+                has_body_text = False
             
                 # 0. Capture standalone PICTURE shapes for quiztime layouts
                 if layout.name.startswith('LAYOUT_sst_quiztime_page') and shape.shape_type == 13:  # PICTURE
@@ -208,92 +219,66 @@ def generate_ppt(docx_path, template_path, output_path):
                     shape.element.getparent().remove(shape.element)
                     continue
 
-                # 0b. Capture ALL non-question1 shapes for discussion layout (groups, pictures, etc.)
-                if layout.name == 'LAYOUT_sst_discussion_page':
-                    if not (shape.has_text_frame and 'question1' in shape.text.lower()):
-                        templates['static_elements'].append(copy.deepcopy(shape.element))
-                        shape.element.getparent().remove(shape.element)
-                        continue
-
-                # 0c. Capture ALL shapes for homework layout
-                if layout.name == 'LAYOUT_sst_homework_page':
-                    templates['static_elements'].append(copy.deepcopy(shape.element))
-                    shape.element.getparent().remove(shape.element)
-                    continue
-
-                # 0d. Capture ALL shapes for syr layout
-                if layout.name == 'LAYOUT_syr':
-                    templates['static_elements'].append(copy.deepcopy(shape.element))
-                    shape.element.getparent().remove(shape.element)
-                    continue
-
-                # 0e. Capture ALL shapes for ask_question layout
-                if layout.name == 'LAYOUT_ask_question':
-                    templates['static_elements'].append(copy.deepcopy(shape.element))
-                    shape.element.getparent().remove(shape.element)
-                    continue
-
-                # 0f. For activity and content pages, separate static elements from the primary text box
-                if layout.name in ('LAYOUT_sst_activity_page_01', 'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page'):
-                    # Exclude Picture Placeholders from extraction so they stay in layout
-                    if getattr(shape, 'is_placeholder', False) and shape.placeholder_format.type == 18:
-                        continue
-
-                    if not (shape.has_text_frame and ('text goes here' in shape.text.lower() or 'topic' in shape.text.lower() or 'subtopic' in shape.text.lower())):
-                        templates['static_elements'].append(copy.deepcopy(shape.element))
-                        shape.element.getparent().remove(shape.element)
-                        continue
-
-                # 1. Check groups for topic/subtopic or "QUIZ TIME"
+                # 1. Identify what this shape is
                 if shape.shape_type == 6:  # GROUP
                     for sub in shape.shapes:
                         if getattr(sub, 'has_text_frame', False):
-                            txt = sub.text.strip().lower()
-                            if txt == 'topic': has_topic = True
-                            elif txt == 'subtopic': has_subtopic = True
-                            elif layout.name.startswith('LAYOUT_sst_quiztime_page') and 'quiz time' in txt:
-                                has_quiz_title = True
-                
-                    if has_quiz_title:
-                        templates['title'] = copy.deepcopy(shape.element)
-                        shape.element.getparent().remove(shape.element)
-                        continue # Move to next shape
-
-                # 2. Check individual shapes for topic/subtopic
+                            txt_low = sub.text.lower()
+                            cleaned_sub_txt = clean(sub.text)
+                            if 'subtopic' in cleaned_sub_txt: has_subtopic = True
+                            elif 'topic' in cleaned_sub_txt: has_topic = True
+                            elif 'quiz time' in txt_low: has_quiz_title = True
+                            elif 'text goes here' in txt_low: has_body_text = True
                 elif getattr(shape, 'has_text_frame', False):
-                    txt = shape.text.strip().lower()
-                    if txt == 'topic': has_topic = True
-                    elif txt == 'subtopic': has_subtopic = True
+                    txt_low = shape.text.lower()
+                    cleaned_shape_txt = clean(shape.text)
+                    if 'subtopic' in cleaned_shape_txt: has_subtopic = True
+                    elif 'topic' in cleaned_shape_txt: has_topic = True
+                    elif 'quiz time' in txt_low: has_quiz_title = True
+                    elif 'text goes here' in txt_low or (shape.is_placeholder and shape.placeholder_format.type == PP_PLACEHOLDER.BODY) or (layout.name == 'LAYOUT_sst_discussion_page' and 'question1' in txt_low):
+                        has_body_text = True
             
-                if has_topic:
+                # 2. Capture and remove based on identification
+                if has_quiz_title:
+                    templates['title'] = copy.deepcopy(shape.element)
+                    shape.element.getparent().remove(shape.element)
+                elif has_topic:
                     templates['topic'] = copy.deepcopy(shape.element)
                     shape.element.getparent().remove(shape.element)
                 elif has_subtopic:
                     templates['subtopic'] = copy.deepcopy(shape.element)
                     shape.element.getparent().remove(shape.element)
-            
-                # 3. Check for body/placeholder text (question, options, or general text)
-                elif shape.has_text_frame and ('Text goes here' in shape.text or (shape.is_placeholder and shape.placeholder_format.type == PP_PLACEHOLDER.BODY) or (layout.name == 'LAYOUT_sst_discussion_page' and 'question1' in shape.text.lower())):
-                    txt = shape.text.lower()
+                elif has_body_text:
                     if layout.name.startswith('LAYOUT_sst_quiztime_page'):
-                        if 'quiz time' in txt:
-                            templates['title'] = copy.deepcopy(shape.element)
-                        elif 'question' in txt:
-                            templates['question'] = copy.deepcopy(shape.element)
-                        elif 'options' in txt:
-                            templates['options'].append(copy.deepcopy(shape.element))
-                        elif txt.strip(): 
+                        txt = shape.text.lower()
+                        if 'question' in txt: templates['question'] = copy.deepcopy(shape.element)
+                        elif 'options' in txt: templates['options'].append(copy.deepcopy(shape.element))
+                        else: 
                             if not templates['title']: templates['title'] = copy.deepcopy(shape.element)
                     elif layout.name == 'LAYOUT_sst_discussion_page':
-                        if 'question1' in txt:
-                            templates['question1'] = copy.deepcopy(shape.element)
+                        templates['question1'] = copy.deepcopy(shape.element)
                     else:
                         if isinstance(templates.get('text'), list):
                             templates['text'].append(copy.deepcopy(shape.element))
                         else:
                             templates['text'] = copy.deepcopy(shape.element)
-                
-                    if shape.element.getparent() is not None:
+                    shape.element.getparent().remove(shape.element)
+                else:
+                    # 3. If not a placeholder, check if it should be a static element
+                    # Skip Picture Placeholders (Type 18)
+                    if getattr(shape, 'is_placeholder', False) and shape.placeholder_format.type == 18:
+                        continue
+                        
+                    is_static_layout = layout.name in (
+                        'LAYOUT_sst_discussion_page', 'LAYOUT_sst_homework_page', 
+                        'LAYOUT_syr', 'LAYOUT_ask_question', 'LAYOUT_sst_activity_page_01', 
+                        'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', 
+                        '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 
+                        'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page',
+                        'LAYOUT_sst_notedown_page'
+                    )
+                    if is_static_layout:
+                        templates['static_elements'].append(copy.deepcopy(shape.element))
                         shape.element.getparent().remove(shape.element)
 
     def iter_block_items(parent):
@@ -447,7 +432,7 @@ def generate_ppt(docx_path, template_path, output_path):
         tf = shape.text_frame
         if not tf.paragraphs or not tf.paragraphs[0].runs:
             if isinstance(new_text, list):
-                shape.text = "\n".join(new_text)
+                shape.text = "\n".join([str(t[0] if isinstance(t, tuple) else t) for t in new_text])
             else:
                 shape.text = str(new_text)
             if center:
@@ -463,17 +448,17 @@ def generate_ppt(docx_path, template_path, output_path):
         bold = font.bold
         italic = font.italic
         underline = font.underline
-
+    
         try:
             color_type = getattr(font.color, 'type', None)
             color_rgb = getattr(font.color, 'rgb', None) if color_type == 1 else None
             color_theme = getattr(font.color, 'theme_color', None) if color_type == 2 else None
         except:
             color_type, color_rgb, color_theme = None, None, None
-
+    
         tf.clear()
     
-        texts = new_text if isinstance(new_text, list) else [str(new_text)]
+        texts = new_text if isinstance(new_text, list) else [new_text]
     
         for i, para_data in enumerate(texts):
             if i == 0:
@@ -487,6 +472,14 @@ def generate_ppt(docx_path, template_path, output_path):
                 p = tf.paragraphs[i]
                 p.space_before = Pt(12)
             
+            # para_data can be a string, a tuple (content, level), or a list of parts
+            level = 0
+            if isinstance(para_data, tuple):
+                level = para_data[1]
+                para_data = para_data[0]
+            
+            p.level = level
+
             # Aggressively clear existing runs and fields in the paragraph XML
             for r_elem in p._p.findall('.//a:r', namespaces=p._p.nsmap):
                 p._p.remove(r_elem)
@@ -496,7 +489,7 @@ def generate_ppt(docx_path, template_path, output_path):
             if center:
                 p.alignment = PP_ALIGN.CENTER
             
-            # para_data can be a string OR a list of parts [{'type': 'text', 'value': '...'}, {'type': 'math', 'value': '...'}]
+            # parts can be a list of math/text chunks OR a single string
             parts = para_data if isinstance(para_data, list) else [{'type': 'text', 'value': str(para_data)}]
         
             for part in parts:
@@ -520,11 +513,74 @@ def generate_ppt(docx_path, template_path, output_path):
                 elif part['type'] == 'math':
                     # Inject OMML XML
                     try:
-                        # The OMML might need to be cleaned up or namespaces handled
+                        from lxml.etree import fromstring as parse_xml
                         math_elem = parse_xml(part['value'])
                         p._p.append(math_elem)
                     except Exception as e:
                         print(f"Error injecting math XML: {e}")
+
+    def apply_metadata_to_slide(slide, slide_data):
+        """Recursively process all shapes in a slide and update metadata placeholders."""
+        # Merge local slide_data with global_metadata, local taking precedence
+        merged_data = {**global_metadata, **slide_data}
+        
+        def process_shape_list(shapes, parent_group=None):
+            for shape in shapes:
+                # print(f"DEBUG: Processing shape {shape.name if hasattr(shape, 'name') else shape} type={shape.shape_type}", flush=True)
+                if shape.shape_type == 6:  # msoGroup
+                    process_shape_list(shape.shapes, parent_group=shape)
+                elif getattr(shape, 'has_text_frame', False):
+                    cleaned_txt = clean(shape.text)
+                    if not cleaned_txt:
+                        continue
+                        
+                    # Priority: Subtopic (must check before topic because 'topic' is in 'subtopic')
+                    if 'subtopic' in cleaned_txt:
+                        val = merged_data.get('subtopic') or merged_data.get('topic')
+                        if val:
+                            replace_text_preserve_format(shape, val, center=True)
+                            tf = shape.text_frame
+                            tf.word_wrap = False
+                            tf.auto_size = None
+                            tf.margin_left = tf.margin_right = 0 # Maximize space
+                            
+                            # Estimate required width (500k EMUs per char is safe for very large fonts)
+                            required_width = len(str(val)) * 500000 + 1000000
+                            max_w = int(prs.slide_width * 0.95)
+                            if required_width > max_w:
+                                required_width = max_w
+                                tf.word_wrap = True # Allow wrap if it's truly massive
+                            
+                            if shape.width > 0:
+                                scale = required_width / shape.width
+                                if parent_group:
+                                    # Proportional scaling of all group elements relative to group start
+                                    g_left = parent_group.left
+                                    for child in parent_group.shapes:
+                                        child.width = int(child.width * scale)
+                                        rel_left = child.left - g_left
+                                        child.left = g_left + int(rel_left * scale)
+                                    parent_group.width = int(parent_group.width * scale)
+                                else:
+                                    shape.width = required_width
+                            else:
+                                shape.width = required_width
+
+                    elif 'topic' in cleaned_txt and merged_data.get('topic'):
+                        replace_text_preserve_format(shape, merged_data['topic'], center=True)
+                            
+                    elif cleaned_txt == 'class' and merged_data.get('class'):
+                        replace_text_preserve_format(shape, merged_data['class'], center=True)
+                    elif cleaned_txt == 'subject' and merged_data.get('subject'):
+                        replace_text_preserve_format(shape, merged_data['subject'], center=True)
+                    elif cleaned_txt == 'chapternumber' and merged_data.get('chapter number'):
+                        replace_text_preserve_format(shape, merged_data['chapter number'], center=True)
+                    elif cleaned_txt == 'chaptername' and merged_data.get('chapter name'):
+                        replace_text_preserve_format(shape, merged_data['chapter name'], center=True)
+                    elif cleaned_txt == 'lesson' and merged_data.get('lesson'):
+                        replace_text_preserve_format(shape, merged_data['lesson'], center=True)
+
+        process_shape_list(slide.shapes)
 
     for section in sections:
         sname = section['name'].strip().lower()
@@ -579,7 +635,14 @@ def generate_ppt(docx_path, template_path, output_path):
                 line = get_text(entry)
                 if ":" in line:
                     parts = line.split(":", 1)
-                    data[parts[0].strip().upper()] = parts[1].strip()
+                    key = clean(parts[0])
+                    val = parts[1].strip()
+                    data[key.upper()] = val
+                    # Store in global metadata if key matches
+                    for g_key in global_metadata:
+                        if clean(g_key) == key:
+                            global_metadata[g_key] = val
+                            break
         
             idx_mapping = {}
             for shape in layout.shapes:
@@ -596,15 +659,16 @@ def generate_ppt(docx_path, template_path, output_path):
             }
 
             for key, template_word in mapping.items():
-                if key in data:
-                    cleaned_word = clean(template_word)
+                cleaned_word = clean(template_word)
+                val = data.get(key) or global_metadata.get(template_word)
+                if val:
                     if cleaned_word in idx_mapping:
                         idx = idx_mapping[cleaned_word]
                         found_on_slide = False
                         for shape in slide.shapes:
                             if shape.is_placeholder and shape.placeholder_format.idx == idx:
-                                shape.text = data[key]
-                                print(f"Updated PageTitle: {template_word} -> {data[key]}")
+                                shape.text = val
+                                print(f"Updated PageTitle: {template_word} -> {val}")
                                 found_on_slide = True
                                 break
                         if not found_on_slide:
@@ -612,7 +676,10 @@ def generate_ppt(docx_path, template_path, output_path):
                     else:
                         print(f"[{template_word}] NOT FOUND in idx_mapping! keys={idx_mapping.keys()}")
                 else:
-                    print(f"[{key}] NOT FOUND in docx data!")
+                    print(f"[{key}] NOT FOUND in docx data or global metadata!")
+            
+            # Catch-all for any other metadata placeholders on title slide
+            apply_metadata_to_slide(slide, data)
         elif layout.name in lo_group_xmls:
             # Inject static title if available
             if layout.name in lo_title_xmls and lo_title_xmls[layout.name] is not None:
@@ -677,6 +744,9 @@ def generate_ppt(docx_path, template_path, output_path):
                 
                 total_subs = sum(len(s) for _, s in grouped_items)
                 print(f"Updated {layout.name} with {len(grouped_items)} items ({total_subs} sub-bullets)")
+                
+                # Use centralized metadata injection for topic/subtopic
+                apply_metadata_to_slide(slide, {})
         elif layout.name in ('LAYOUT_sst_quiztime_page_01', 'LAYOUT_sst_quiztime_page_02'):
             templates = sst_content_templates.get(layout.name, {})
         
@@ -765,10 +835,14 @@ def generate_ppt(docx_path, template_path, output_path):
                             replace_text_preserve_format(slide.shapes[-1], '')
         
             print(f"Updated {layout.name} with quiz question and {len(quiz_data['options'])} options.")
+            
+            # Use centralized metadata injection for topic/subtopic
+            apply_metadata_to_slide(slide, {})
             quiz_data = None  # Reset for next quiz section
         elif layout.name in ('LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page'):
             data = {}
             data_text_list = []
+            has_local_topic = False
             for entry in section['content']:
                 content_obj = entry[0] if isinstance(entry, tuple) else entry
             
@@ -782,23 +856,29 @@ def generate_ppt(docx_path, template_path, output_path):
             
                 if line_low.startswith('topic:'):
                     data['topic'] = line.split(':', 1)[1].strip()
+                    if data['topic']: has_local_topic = True
                 elif line_low.startswith('subtopic:'):
                     data['subtopic'] = line.split(':', 1)[1].strip()
                 elif ":" in line:
-                    # Check if it's a known metadata field or just text with a colon
                     parts = line.split(":", 1)
-                    key = parts[0].strip().lower()
+                    key = clean(parts[0])
                     val = parts[1].strip()
                     if key == 'text':
                         data_text_list.append(val)
                     elif key in ('topic', 'subtopic'):
                         data[key] = val
+                        if key == 'topic' and val: has_local_topic = True
                     else:
-                        # Treat unknown "key: val" as plain text if it looks like a sentence
                         data_text_list.append(line)
                 elif line.strip():
                     data_text_list.append(line.strip())
                 
+            # Fallback to global metadata
+            if 'topic' not in data and global_metadata.get('topic'):
+                data['topic'] = global_metadata['topic']
+            if 'subtopic' not in data and global_metadata.get('subtopic'):
+                data['subtopic'] = global_metadata['subtopic']
+
             if data_text_list:
                 data['text'] = data_text_list
         
@@ -806,7 +886,8 @@ def generate_ppt(docx_path, template_path, output_path):
             shape_elements = []
             templates = sst_content_templates.get(layout.name, {})
         
-            if templates.get('topic') is not None:
+            # ONLY inject topic shape if it was written in the docx for this slide
+            if templates.get('topic') is not None and has_local_topic:
                 topic_elem = copy.deepcopy(templates['topic'])
                 slide.shapes._spTree.append(topic_elem)
                 shape_elements.append(slide.shapes[-1])
@@ -870,33 +951,8 @@ def generate_ppt(docx_path, template_path, output_path):
                     for shape in text_shapes[1:]:
                         replace_text_preserve_format(shape, "", font_color=RGBColor(255, 255, 255))
 
-            for shape in shape_elements:
-                # We already replaced 'Text goes here'
-                # Check for topic/subtopic either as standalone shape or inside group
-                is_group = (getattr(shape, 'shape_type', None) == 6)
-                targets = shape.shapes if is_group else [shape]
-            
-                for target in targets:
-                    if getattr(target, 'has_text_frame', False):
-                        txt = target.text.strip().lower()
-                        if 'topic' in data or 'subtopic' in data:
-                            # print(f"DEBUG: Comparing txt='{txt}' with data keys {list(data.keys())}")
-                            pass
-                        if txt == 'topic' and 'topic' in data:
-                            replace_text_preserve_format(target, data['topic'], center=True)
-                        elif txt == 'subtopic' and 'subtopic' in data:
-                            replace_text_preserve_format(target, data['subtopic'], center=True)
-                            target.text_frame.word_wrap = False
-                            # Resize logic: if it's a group, resize all children. If standalone, resize it.
-                            estimated_width = len(data['subtopic']) * 300000 + 400000
-                            if estimated_width > shape.width:
-                                diff = estimated_width - shape.width
-                                shape.width = estimated_width
-                                if is_group:
-                                    for child in shape.shapes:
-                                        child.width = child.width + diff
-                                else:
-                                    pass # Shape width already updated
+            # Use centralized metadata injection for topic/subtopic
+            apply_metadata_to_slide(slide, data)
                             
             # Handle picture placeholder(s)
             images = section.get('images', [])
@@ -1081,6 +1137,8 @@ def generate_ppt(docx_path, template_path, output_path):
             elif pic_ph is not None:
                 pic_ph.element.getparent().remove(pic_ph.element)
 
+            # Use centralized metadata injection for topic/subtopic
+            apply_metadata_to_slide(slide, {})
             print(f"Updated {layout.name} with activity content and {len(images)} images.")
 
         elif layout.name == 'LAYOUT_final_quiz_page':
@@ -1118,23 +1176,68 @@ def generate_ppt(docx_path, template_path, output_path):
             print(f"Generated {len(qa_pairs)} Question and Answer slide pairs.")
         elif layout.name == 'LAYOUT_sst_notedown_page':
             templates = sst_content_templates.get(layout.name, {})
+            data = {}
+            has_local_topic = False
+            
+            # First pass: Extract topic/subtopic and identify lines to skip
+            body_entries = []
+            for entry in section['content']:
+                line = get_text(entry)
+                line_low = line.lower()
+                if line_low.startswith('topic:'):
+                    data['topic'] = line.split(':', 1)[1].strip()
+                    if data['topic']: has_local_topic = True
+                elif line_low.startswith('subtopic:'):
+                    data['subtopic'] = line.split(':', 1)[1].strip()
+                else:
+                    body_entries.append(entry)
+
+            # Fallback for data only
+            if 'topic' not in data and global_metadata.get('topic'):
+                data['topic'] = global_metadata['topic']
+            if 'subtopic' not in data and global_metadata.get('subtopic'):
+                data['subtopic'] = global_metadata['subtopic']
+
+            # 1. Inject Topic/Subtopic first so they are behind (earlier in _spTree)
+            if templates.get('topic') is not None and has_local_topic:
+                slide.shapes._spTree.append(copy.deepcopy(templates['topic']))
+            
+            if templates.get('subtopic') is not None and 'subtopic' in data:
+                slide.shapes._spTree.append(copy.deepcopy(templates['subtopic']))
+
+            # 2. Inject static elements (NoteDown header) on top of topic
+            for static_elem in templates.get('static_elements', []):
+                elem_copy = remove_locks(copy.deepcopy(static_elem))
+                copy_image_rels(elem_copy, layout.part, slide.part)
+                slide.shapes._spTree.append(elem_copy)
+
+            # 3. Inject text box
+            shape = None
             if templates.get('text') is not None:
                 text_xmls = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
                 if text_xmls:
-                    text_elem = copy.deepcopy(text_xmls[0])
-                    slide.shapes._spTree.append(text_elem)
+                    slide.shapes._spTree.append(copy.deepcopy(text_xmls[0]))
                     shape = slide.shapes[-1]
             
+            if shape and body_entries:
                 processed_content = []
-                for entry in section['content']:
-                    line = get_text(entry)
-                    clean_line = line.strip()
-                    if clean_line.startswith(("•", "-", "*")):
-                        clean_line = "❖ " + clean_line.lstrip("•-*").strip()
-                    processed_content.append(clean_line)
+                for entry in body_entries:
+                    content_obj = entry[0] if isinstance(entry, tuple) else entry
+                    ilvl = entry[1] if isinstance(entry, tuple) else 0
+                    
+                    # Apply diamond marker to top-level bullets
+                    if ilvl == 0 and isinstance(content_obj, str):
+                        clean_line = content_obj.strip()
+                        if clean_line.startswith(("•", "-", "*")):
+                            content_obj = "❖ " + clean_line.lstrip("•-*").strip()
+                    
+                    processed_content.append((content_obj, ilvl))
             
                 replace_text_preserve_format(shape, processed_content)
-                print(f"Updated {layout.name} Body text with preserved formatting and spacing.")
+                
+            # Use centralized metadata injection for topic/subtopic content replacement
+            apply_metadata_to_slide(slide, data)
+            print(f"Updated {layout.name} with topic visibility (layered behind) and bullet support.")
 
         elif layout.name == 'LAYOUT_sst_discussion_page':
             templates = sst_content_templates.get(layout.name, {})
@@ -1178,6 +1281,9 @@ def generate_ppt(docx_path, template_path, output_path):
                 else:
                     replace_text_preserve_format(shape, "question1")  # Keep original if missing
                     print(f"Inserted {layout.name} with default text")
+                
+                # Use centralized metadata injection for topic/subtopic
+                apply_metadata_to_slide(slide, {})
 
         elif layout.name == 'LAYOUT_sst_homework_page':
             templates = sst_content_templates.get(layout.name, {})
@@ -1186,6 +1292,9 @@ def generate_ppt(docx_path, template_path, output_path):
                 elem_copy = remove_locks(copy.deepcopy(static_elem))
                 copy_image_rels(elem_copy, layout.part, slide.part)
                 slide.shapes._spTree.append(elem_copy)
+            
+            # Use centralized metadata injection for topic/subtopic
+            apply_metadata_to_slide(slide, {})
             print(f"Inserted {layout.name} with all background elements")
 
         # After processing the section and adding elements, check if we need to overlay SYR
@@ -1231,4 +1340,4 @@ def generate_ppt(docx_path, template_path, output_path):
 
 if __name__ == "__main__":
     generate_ppt("content.docx", "template.pptx", "Generated_Presentation.pptx")
-    print("DONE -- PPT Generated")
+    print("DONE -- PPT Generated", flush=True)
