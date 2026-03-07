@@ -150,6 +150,11 @@ def generate_ppt(docx_path, template_path, output_path):
                 if layout.name == 'LAYOUT_sst_deafult_page':
                     return layout
 
+        if name.replace("_", "").lower() in ('homeworkquestionpage', 'ssthomeworkquestionpage'):
+            for layout in prs.slide_layouts:
+                if layout.name == 'LAYOUT_homework_question_page':
+                    return layout
+
         if name.replace("_", "").lower() in ('sstactivitystaticpage', 'sst_activity_static_page', 'activitystaticpage'):
             for layout in prs.slide_layouts:
                 if layout.name == 'LAYOUT_sst_activity_static_page':
@@ -167,6 +172,7 @@ def generate_ppt(docx_path, template_path, output_path):
         'LAYOUT_sst_quiztime_page_02': {'title': None, 'question': None, 'options': [], 'picture': None},
         'LAYOUT_sst_discussion_page': {'question1': None, 'static_elements': []},
         'LAYOUT_sst_homework_page': {'static_elements': []},
+        'LAYOUT_homework_question_page': {'text': [], 'static_elements': []},
         'LAYOUT_syr': {'static_elements': []},
         'LAYOUT_ask_question': {'static_elements': []},
         'LAYOUT_sst_activity_page_01': {'static_elements': [], 'text': []},
@@ -242,14 +248,17 @@ def generate_ppt(docx_path, template_path, output_path):
                             if 'subtopic' in cleaned_sub_txt: has_subtopic = True
                             elif 'topic' in cleaned_sub_txt: has_topic = True
                             elif 'quiz time' in txt_low: has_quiz_title = True
-                            elif 'text goes here' in txt_low: has_body_text = True
+                            elif 'text goes here' in txt_low or 'question goes here' in txt_low: has_body_text = True
                 elif getattr(shape, 'has_text_frame', False):
                     txt_low = shape.text.lower()
                     cleaned_shape_txt = clean(shape.text)
                     if 'subtopic' in cleaned_shape_txt: has_subtopic = True
                     elif 'topic' in cleaned_shape_txt: has_topic = True
                     elif 'quiz time' in txt_low: has_quiz_title = True
-                    elif 'text goes here' in txt_low or (shape.is_placeholder and shape.placeholder_format.type == PP_PLACEHOLDER.BODY) or (layout.name == 'LAYOUT_sst_discussion_page' and 'question1' in txt_low):
+                    elif 'text goes here' in txt_low or 'question goes here' in txt_low or \
+                         'click to edit master' in txt_low or \
+                         (shape.is_placeholder and shape.placeholder_format.type == 2) or \
+                         (layout.name == 'LAYOUT_sst_discussion_page' and 'question1' in txt_low):
                         has_body_text = True
             
                 # 2. Capture and remove based on identification
@@ -329,39 +338,47 @@ def generate_ppt(docx_path, template_path, output_path):
                 if ilvl_elem is not None:
                     ilvl = int(ilvl_elem.get(f'{{{w_ns}}}val', '0'))
         
-            # Check for math equations (OMML)
+            # Check for math equations (OMML) and normal text runs
+            # We iterate through all children of the paragraph element to preserve order
             m_ns = {'m': 'http://schemas.openxmlformats.org/officeDocument/2006/math'}
-            math_elements = item._element.findall('.//m:oMath', namespaces=m_ns)
-        
-            if math_elements:
-                # If paragraph has math, decompose into parts
-                parts = []
-                # We iterate through all children of the paragraph element
-                for child in item._element.iterchildren():
-                    if child.tag.endswith('}oMath'):
-                        from lxml import etree
-                        math_xml = etree.tostring(child, encoding='unicode')
-                        parts.append({'type': 'math', 'value': math_xml})
-                    elif child.tag.endswith('}oMathPara'):
-                        # oMathPara contains one or more oMath elements
-                        for subchild in child.iterchildren():
-                            if subchild.tag.endswith('}oMath'):
-                                from lxml import etree
-                                math_xml = etree.tostring(subchild, encoding='unicode')
-                                parts.append({'type': 'math', 'value': math_xml})
-                    elif child.tag.endswith('}r'):
-                        t_elem = child.find(f'.//{{{w_ns}}}t')
-                        if t_elem is not None and t_elem.text:
-                            parts.append({'type': 'text', 'value': t_elem.text})
+            parts = []
             
-                # If parts is empty (sometimes iterchildren misses things or structure is complex),
-                # fall back to plain text
-                if not parts:
-                    lines_to_process.append((item.text.strip(), ilvl))
-                else:
-                    lines_to_process.append((parts, ilvl))
-            else:
+            for child in item._element.iterchildren():
+                if child.tag.endswith('}oMath'):
+                    from lxml import etree
+                    math_xml = etree.tostring(child, encoding='unicode')
+                    parts.append({'type': 'math', 'value': math_xml})
+                elif child.tag.endswith('}oMathPara'):
+                    # oMathPara contains one or more oMath elements
+                    for subchild in child.iterchildren():
+                        if subchild.tag.endswith('}oMath'):
+                            from lxml import etree
+                            math_xml = etree.tostring(subchild, encoding='unicode')
+                            parts.append({'type': 'math', 'value': math_xml})
+                elif child.tag.endswith('}r'):
+                    t_elem = child.find(f'.//{{{w_ns}}}t')
+                    if t_elem is not None and t_elem.text:
+                        # Check formatting properties (bold)
+                        rPr = child.find(f'.//{{{w_ns}}}rPr')
+                        is_bold = False
+                        is_italic = False
+                        if rPr is not None:
+                            b_elem = rPr.find(f'.//{{{w_ns}}}b')
+                            i_elem = rPr.find(f'.//{{{w_ns}}}i')
+                            if b_elem is not None:
+                                val = b_elem.get(f'{{{w_ns}}}val', '1')
+                                is_bold = val not in ('0', 'false', 'False')
+                            if i_elem is not None:
+                                val = i_elem.get(f'{{{w_ns}}}val', '1')
+                                is_italic = val not in ('0', 'false', 'False')
+                                
+                        parts.append({'type': 'text', 'value': t_elem.text, 'bold': is_bold, 'italic': is_italic})
+        
+            # If parts is empty, fall back to plain text
+            if not parts:
                 lines_to_process.append((item.text.strip(), ilvl))
+            else:
+                lines_to_process.append((parts, ilvl))
             
             # Extract images from paragraph
             for run in item.runs:
@@ -440,7 +457,7 @@ def generate_ppt(docx_path, template_path, output_path):
                     current_section['images'].extend(images_to_add)
                     images_to_add = []
 
-    def replace_text_preserve_format(shape, new_text, center=False, font_color=None):
+    def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None):
         if not shape.has_text_frame:
             return
         tf = shape.text_frame
@@ -506,6 +523,12 @@ def generate_ppt(docx_path, template_path, output_path):
             # parts can be a list of math/text chunks OR a single string
             parts = para_data if isinstance(para_data, list) else [{'type': 'text', 'value': str(para_data)}]
         
+            # Layouts that should have bold text colored yellow (#FFC000)
+            yellow_bold_layouts = [
+                'LAYOUT_sst_lo_page', 'LAYOUT_sst_summary_page', 'LAYOUT_sst_previous_page',
+                'LAYOUT_math_lo_page', 'LAYOUT_math_summary_page'
+            ]
+
             for part in parts:
                 if part['type'] == 'text':
                     new_run = p.add_run()
@@ -513,11 +536,22 @@ def generate_ppt(docx_path, template_path, output_path):
                 
                     if name is not None: new_run.font.name = name
                     if size is not None: new_run.font.size = size
-                    if bold is not None: new_run.font.bold = bold
-                    if italic is not None: new_run.font.italic = italic
+                    
+                    # Apply bold/italic if explicitly set in the part, otherwise fallback to template font style
+                    part_bold = part.get('bold', False)
+                    if part_bold or bold is not None: 
+                        new_run.font.bold = part_bold or bold
+                    
+                    part_italic = part.get('italic', False)
+                    if part_italic or italic is not None: 
+                        new_run.font.italic = part_italic or italic
+                        
                     if underline is not None: new_run.font.underline = underline
                 
-                    if font_color is not None:
+                    # Color logic: overrides layout specific bold color, then parameter font_color, then template
+                    if part_bold and layout_name in yellow_bold_layouts:
+                        new_run.font.color.rgb = RGBColor(255, 192, 0) # #FFC000
+                    elif font_color is not None:
                         new_run.font.color.rgb = font_color
                     else:
                         if color_rgb is not None:
@@ -550,20 +584,41 @@ def generate_ppt(docx_path, template_path, output_path):
                         
                     # Priority: Subtopic (must check before topic because 'topic' is in 'subtopic')
                     if 'subtopic' in cleaned_txt:
-                        val = merged_data.get('subtopic') or merged_data.get('topic')
+                        if 'topic' in cleaned_txt:
+                            # Combined placeholder: Topic Name - Subtopic Name
+                            topic_val = merged_data.get('topic', '')
+                            subtopic_val = merged_data.get('subtopic', '')
+                            if topic_val and subtopic_val:
+                                val = f"{topic_val} - {subtopic_val}"
+                            else:
+                                val = topic_val or subtopic_val
+                        else:
+                            val = merged_data.get('subtopic') or merged_data.get('topic')
+                            
                         if val:
-                            replace_text_preserve_format(shape, val, center=True)
+                            replace_text_preserve_format(shape, val, center=True, layout_name=slide.slide_layout.name)
                             tf = shape.text_frame
                             tf.word_wrap = False
-                            tf.auto_size = None
-                            tf.margin_left = tf.margin_right = 0 # Maximize space
+                            # Estimate required width (220k EMUs per char is very tight for Calibri)
+                            # Add just enough padding for the diagonal corners
+                            text_width = len(str(val).strip()) * 220000
+                            padding = 500000  # Tight padding for shape geometry
+                            required_width = text_width + padding
                             
-                            # Estimate required width (500k EMUs per char is safe for very large fonts)
-                            required_width = len(str(val)) * 500000 + 1000000
+                            # Ensure we don't shrink the shape below its original template size
+                            if shape.width > 0 and required_width < shape.width:
+                                required_width = shape.width
+                                
                             max_w = int(prs.slide_width * 0.95)
                             if required_width > max_w:
                                 required_width = max_w
-                                tf.word_wrap = True # Allow wrap if it's truly massive
+                                tf.word_wrap = True  # Allow wrap if it's truly massive
+                            
+                            # Set text frame margins to give text space within the shape
+                            tf.margin_left = int(padding / 4)
+                            tf.margin_right = int(padding / 4)
+                            tf.margin_top = Pt(4)
+                            tf.margin_bottom = Pt(4)
                             
                             if shape.width > 0:
                                 scale = required_width / shape.width
@@ -581,18 +636,18 @@ def generate_ppt(docx_path, template_path, output_path):
                                 shape.width = required_width
 
                     elif 'topic' in cleaned_txt and merged_data.get('topic'):
-                        replace_text_preserve_format(shape, merged_data['topic'], center=True)
+                        replace_text_preserve_format(shape, merged_data['topic'], center=True, layout_name=slide.slide_layout.name)
                             
                     elif cleaned_txt == 'class' and merged_data.get('class'):
-                        replace_text_preserve_format(shape, merged_data['class'], center=True)
+                        replace_text_preserve_format(shape, merged_data['class'], center=True, layout_name=slide.slide_layout.name)
                     elif cleaned_txt == 'subject' and merged_data.get('subject'):
-                        replace_text_preserve_format(shape, merged_data['subject'], center=True)
+                        replace_text_preserve_format(shape, merged_data['subject'], center=True, layout_name=slide.slide_layout.name)
                     elif cleaned_txt == 'chapternumber' and merged_data.get('chapter number'):
-                        replace_text_preserve_format(shape, merged_data['chapter number'], center=True)
+                        replace_text_preserve_format(shape, merged_data['chapter number'], center=True, layout_name=slide.slide_layout.name)
                     elif cleaned_txt == 'chaptername' and merged_data.get('chapter name'):
-                        replace_text_preserve_format(shape, merged_data['chapter name'], center=True)
+                        replace_text_preserve_format(shape, merged_data['chapter name'], center=True, layout_name=slide.slide_layout.name)
                     elif cleaned_txt == 'lesson' and merged_data.get('lesson'):
-                        replace_text_preserve_format(shape, merged_data['lesson'], center=True)
+                        replace_text_preserve_format(shape, merged_data['lesson'], center=True, layout_name=slide.slide_layout.name)
 
         process_shape_list(slide.shapes)
 
@@ -706,18 +761,32 @@ def generate_ppt(docx_path, template_path, output_path):
                 # Each item: (main_text, [(sub_text, ilvl), ...])
                 grouped_items = []
                 for entry in section['content']:
-                    text = entry[0] if isinstance(entry, tuple) else entry
+                    raw_text = entry[0] if isinstance(entry, tuple) else entry
                     ilvl = entry[1] if isinstance(entry, tuple) else 0
-                    clean_line = text.strip()
-                    if clean_line.startswith(('•', '-', '*')):
-                        clean_line = clean_line.lstrip('•-*').strip()
+                    
+                    # Convert raw_text to string for checking
+                    if isinstance(raw_text, list):
+                        plain_line = "".join([p['value'] for p in raw_text if p['type'] == 'text']).strip()
+                    else:
+                        plain_line = str(raw_text).strip()
+                    
+                    if plain_line.startswith(('•', '-', '*')):
+                        plain_line = plain_line.lstrip('•-*').strip()
+                        # If raw_text is a list, we should technically trim the first text part. 
+                        # For simplicity, we just keep raw_text as is but use plain_line for grouping logic.
+                        # Wait, we need to strip the bullet from the actual printed text too.
+                        if isinstance(raw_text, list):
+                            if raw_text and raw_text[0]['type'] == 'text':
+                                raw_text[0]['value'] = raw_text[0]['value'].lstrip('•-*').strip()
+                        else:
+                            raw_text = str(raw_text).lstrip('•-*').strip()
                 
                     if ilvl == 0:
-                        grouped_items.append((clean_line, []))
+                        grouped_items.append((raw_text, []))
                     elif ilvl > 0 and grouped_items:
-                        grouped_items[-1][1].append((clean_line, ilvl))
+                        grouped_items[-1][1].append((raw_text, ilvl))
                     else:
-                        grouped_items.append((clean_line, []))
+                        grouped_items.append((raw_text, []))
             
                 current_top_offset = 0
                 for main_text, sub_entries in grouped_items:
@@ -743,10 +812,24 @@ def generate_ppt(docx_path, template_path, output_path):
                                 bodyPr.set('anchor', 't')
                             
                             # Set main text in first paragraph
-                            tf.paragraphs[0].text = main_text
-                            for run in tf.paragraphs[0].runs:
-                                run.font.size = Pt(36)
-                                run.font.color.rgb = RGBColor(255, 255, 255)
+                            p0 = tf.paragraphs[0]
+                            # Clear existing runs
+                            for r_len in range(len(p0.runs)-1, -1, -1):
+                                r_elem = p0.runs[r_len]._r
+                                r_elem.getparent().remove(r_elem)
+                                
+                            parts = main_text if isinstance(main_text, list) else [{'type': 'text', 'value': str(main_text)}]
+                            for part in parts:
+                                if part['type'] == 'text':
+                                    run = p0.add_run()
+                                    run.text = part['value']
+                                    run.font.size = Pt(36)
+                                    part_bold = part.get('bold', False)
+                                    if part_bold and layout.name in ['LAYOUT_sst_lo_page', 'LAYOUT_sst_summary_page', 'LAYOUT_sst_previous_page', 'LAYOUT_math_lo_page', 'LAYOUT_math_summary_page']:
+                                        run.font.bold = part_bold
+                                        run.font.color.rgb = RGBColor(255, 192, 0)
+                                    else:
+                                        run.font.color.rgb = RGBColor(255, 255, 255)
                             
                             # Set spacing on main paragraph (0 before to align with shape, 600 after for gap)
                             p0_pPr = tf.paragraphs[0]._p.find(f'{{{a_ns}}}pPr')
@@ -793,19 +876,29 @@ def generate_ppt(docx_path, template_path, output_path):
                                             if spcPts is not None:
                                                 spcPts.set('val', '600')
                                     
-                                    # Create a new run element with the bullet text
-                                    r_elem = parse_xml(
-                                        f'<a:r xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
-                                        f'<a:rPr lang="en-US" sz="{max(2000, 3200 - (bullet_ilvl * 400))}" dirty="0">'
-                                        f'<a:solidFill><a:schemeClr val="bg1"/></a:solidFill>'
-                                        f'<a:latin typeface="Calibri"/>'
-                                        f'<a:ea typeface="Calibri"/>'
-                                        f'<a:cs typeface="Calibri"/>'
-                                        f'</a:rPr>'
-                                        f'<a:t>{bullet_text}</a:t>'
-                                        f'</a:r>'
-                                    )
-                                    new_p.append(r_elem)
+                                    parts = bullet_text if isinstance(bullet_text, list) else [{'type': 'text', 'value': str(bullet_text)}]
+                                    for part in parts:
+                                        if part['type'] == 'text':
+                                            color_val = "FFFFFF"  # White default
+                                            part_bold = part.get('bold', False)
+                                            # If part is bold and on a target layout, make it yellow (#FFC000)
+                                            if part_bold and layout.name in ['LAYOUT_sst_lo_page', 'LAYOUT_sst_summary_page', 'LAYOUT_sst_previous_page', 'LAYOUT_math_lo_page', 'LAYOUT_math_summary_page']:
+                                                color_val = "FFC000"
+                                            
+                                            bold_attr = ' b="1"' if part_bold else ''
+                                            
+                                            r_elem = parse_xml(
+                                                f'<a:r xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                                                f'<a:rPr lang="en-US" sz="{max(2000, 3200 - (bullet_ilvl * 400))}" dirty="0"{bold_attr}>'
+                                                f'<a:solidFill><a:srgbClr val="{color_val}"/></a:solidFill>'
+                                                f'<a:latin typeface="Calibri"/>'
+                                                f'<a:ea typeface="Calibri"/>'
+                                                f'<a:cs typeface="Calibri"/>'
+                                                f'</a:rPr>'
+                                                f'<a:t>{part["value"]}</a:t>'
+                                                f'</a:r>'
+                                            )
+                                            new_p.append(r_elem)
                                     txBody.append(new_p)
                                 else:
                                     # Fallback if no subtitle templates are available
@@ -927,13 +1020,14 @@ def generate_ppt(docx_path, template_path, output_path):
             has_local_topic = False
             for entry in section['content']:
                 content_obj = entry[0] if isinstance(entry, tuple) else entry
+                ilvl = entry[1] if isinstance(entry, tuple) else 0
             
-                # If it's a math/multi-part paragraph, it's always body text
                 if isinstance(content_obj, list):
-                    data_text_list.append(content_obj)
-                    continue
-                
-                line = str(content_obj)
+                    # For parsing Topic/Subtopic, we need the plain text
+                    line = "".join([p['value'] for p in content_obj if p['type'] == 'text'])
+                else:
+                    line = str(content_obj)
+                    
                 line_low = line.lower()
             
                 if line_low.startswith('topic:'):
@@ -945,15 +1039,16 @@ def generate_ppt(docx_path, template_path, output_path):
                     parts = line.split(":", 1)
                     key = clean(parts[0])
                     val = parts[1].strip()
-                    if key == 'text':
-                        data_text_list.append(val)
-                    elif key in ('topic', 'subtopic'):
-                        data[key] = val
-                        if key == 'topic' and val: has_local_topic = True
+                    if 'subtopic' in key or key.startswith('subtopic') or key.startswith('subtop'):
+                        data['subtopic'] = val
+                    elif 'topic' in key or key.startswith('topic'):
+                        data['topic'] = val
+                    elif key == 'text':
+                        data_text_list.append((content_obj, ilvl))
                     else:
-                        data_text_list.append(line)
+                        data_text_list.append((content_obj, ilvl))
                 elif line.strip():
-                    data_text_list.append(line.strip())
+                    data_text_list.append((content_obj, ilvl))
                 
             # Fallback to global metadata
             if 'topic' not in data and global_metadata.get('topic'):
@@ -965,16 +1060,17 @@ def generate_ppt(docx_path, template_path, output_path):
                 data['text'] = data_text_list
         
             # Inject extracted XML templates onto this slide from the correct layout version
-            shape_elements = []
+            shape_elements = [] # All elements injected
+            text_shapes = []    # Only elements that should hold body text
             templates = sst_content_templates.get(layout.name, {})
         
-            # ONLY inject topic shape if it was written in the docx for this slide
-            if templates.get('topic') is not None and has_local_topic:
+            # Inject topic shape if available (local or global)
+            if templates.get('topic') is not None and 'topic' in data:
                 topic_elem = copy.deepcopy(templates['topic'])
                 slide.shapes._spTree.append(topic_elem)
                 shape_elements.append(slide.shapes[-1])
             
-            if templates.get('subtopic') is not None and 'subtopic' in data:
+            if templates.get('subtopic') is not None:
                 subtopic_elem = copy.deepcopy(templates['subtopic'])
                 slide.shapes._spTree.append(subtopic_elem)
                 shape_elements.append(slide.shapes[-1])
@@ -987,34 +1083,31 @@ def generate_ppt(docx_path, template_path, output_path):
                 texts = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
                 for text_elem_xml in texts:
                     text_elem = copy.deepcopy(text_elem_xml)
-                    # If no subtopic, move the text box to where the subtopic would have been
+                    
+                    # If no subtopic in data, shift the text box up to the subtopic's position
                     if 'subtopic' not in data and templates.get('subtopic') is not None:
                         sub_xml = templates['subtopic']
-                        # Search for offset element in subtopic template
-                        # The namespace for 'a' is usually needed
                         ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
                         sub_off = sub_xml.find('.//a:off', namespaces=ns)
                         text_off = text_elem.find('.//a:off', namespaces=ns)
-                    
                         if sub_off is not None and text_off is not None:
-                            # Move text to subtopic's Y coordinate
                             text_off.set('y', sub_off.get('y'))
                 
                     slide.shapes._spTree.append(text_elem)
-                    shape_elements.append(slide.shapes[-1])
-        
-            # Insert text and subtexts
-            
-            # Extract text shapes to distribute paragraphs among them
-            text_shapes = []
-            for s in shape_elements:
-                if getattr(s, 'shape_type', None) == 6:  # msoGroup
-                    for sub in s.shapes:
-                        if getattr(sub, 'has_text_frame', False) and 'Text goes here' in sub.text:
-                            text_shapes.append(sub)
-                elif getattr(s, 'has_text_frame', False) and 'Text goes here' in s.text:
-                    text_shapes.append(s)
+                    new_shape = slide.shapes[-1]
+                    shape_elements.append(new_shape)
                     
+                    # Identify if this injected shape is a text shape
+                    if getattr(new_shape, 'shape_type', None) == 6: # Group
+                        for sub in new_shape.shapes:
+                            if getattr(sub, 'has_text_frame', False) and \
+                               ('text goes here' in sub.text.lower() or 'click to edit' in sub.text.lower()):
+                                text_shapes.append(sub)
+                    elif getattr(new_shape, 'has_text_frame', False):
+                        # Even if it contains other master text, if it came from the 'text' template, it's our target
+                        text_shapes.append(new_shape)
+            
+            # Insert text and subtexts
             if text_shapes and 'text' in data:
                 paragraphs = data['text']
                 if len(text_shapes) > 1 and len(paragraphs) > 1:
@@ -1024,14 +1117,16 @@ def generate_ppt(docx_path, template_path, output_path):
                     for idx, shape in enumerate(text_shapes):
                         chunk = paragraphs[idx * chunk_size : (idx + 1) * chunk_size]
                         if chunk:
-                            replace_text_preserve_format(shape, chunk, font_color=RGBColor(255, 255, 255))
+                            replace_text_preserve_format(shape, chunk)
                         else:
-                            replace_text_preserve_format(shape, "", font_color=RGBColor(255, 255, 255))
+                            replace_text_preserve_format(shape, "")
                 else:
                     # Only one text shape or one paragraph, put everything in the first shape and clear others
-                    replace_text_preserve_format(text_shapes[0], paragraphs, font_color=RGBColor(255, 255, 255))
+                    replace_text_preserve_format(text_shapes[0], paragraphs)
                     for shape in text_shapes[1:]:
-                        replace_text_preserve_format(shape, "", font_color=RGBColor(255, 255, 255))
+                        replace_text_preserve_format(shape, "")
+            elif 'text' in data:
+                pass # No matching placeholders found for the provided text
 
             # Use centralized metadata injection for topic/subtopic
             apply_metadata_to_slide(slide, data)
@@ -1114,14 +1209,13 @@ def generate_ppt(docx_path, template_path, output_path):
                 text_content.append(content_obj)
 
             if templates.get('text') is not None:
-                # Due to templates.get('text') being a list, pick the first text box.
                 text_xmls = templates['text'] if isinstance(templates['text'], list) else [templates['text']]
                 if text_xmls:
                     text_elem = copy.deepcopy(text_xmls[0])
                     slide.shapes._spTree.append(text_elem)
                     shape = slide.shapes[-1]
                 # Force black text for activity boxes if they are yellow
-                replace_text_preserve_format(shape, text_content, font_color=RGBColor(0, 0, 0))
+                replace_text_preserve_format(shape, text_content, font_color=RGBColor(0, 0, 0), layout_name=layout.name)
             
                 # Estimate height needed for 36pt font
                 chars_per_line = max(20, int((shape.width / 914400) * 3.5))
@@ -1315,7 +1409,7 @@ def generate_ppt(docx_path, template_path, output_path):
                     
                     processed_content.append((content_obj, ilvl))
             
-                replace_text_preserve_format(shape, processed_content)
+                replace_text_preserve_format(shape, processed_content, layout_name=layout.name)
                 
             # Use centralized metadata injection for topic/subtopic content replacement
             apply_metadata_to_slide(slide, data)
@@ -1346,7 +1440,7 @@ def generate_ppt(docx_path, template_path, output_path):
                 slide.shapes._spTree.append(q1_elem)
                 shape = slide.shapes[-1]
                 if q1_lines:
-                    replace_text_preserve_format(shape, q1_lines, font_color=RGBColor(255, 255, 255))
+                    replace_text_preserve_format(shape, q1_lines, font_color=RGBColor(255, 255, 255), layout_name=layout.name)
                     # If single line, remove bullet formatting from paragraphs
                     if len(q1_lines) == 1:
                         ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
@@ -1366,6 +1460,27 @@ def generate_ppt(docx_path, template_path, output_path):
                 
                 # Use centralized metadata injection for topic/subtopic
                 apply_metadata_to_slide(slide, {})
+
+        elif layout.name == 'LAYOUT_homework_question_page':
+            templates = sst_content_templates.get(layout.name, {})
+            # Inject all static elements
+            for static_elem in templates.get('static_elements', []):
+                elem_copy = remove_locks(copy.deepcopy(static_elem))
+                copy_image_rels(elem_copy, layout.part, slide.part)
+                slide.shapes._spTree.append(elem_copy)
+            
+            # Inject dynamic question text
+            if templates.get('text'):
+                question_text = "\n".join([get_text(entry).strip() for entry in section['content'] if get_text(entry).strip()])
+                for text_elem_xml in templates['text']:
+                    text_elem = copy.deepcopy(text_elem_xml)
+                    slide.shapes._spTree.append(text_elem)
+                    shape = slide.shapes[-1]
+                    if question_text:
+                        replace_text_preserve_format(shape, question_text, layout_name=layout.name)
+            
+            apply_metadata_to_slide(slide, {})
+            print(f"Inserted {layout.name} with dynamic question text")
 
         elif layout.name == 'LAYOUT_sst_homework_page':
             templates = sst_content_templates.get(layout.name, {})

@@ -1,0 +1,14 @@
+.git
+__pycache__
+*.pyc
+temp_uploads/
+users.db
+Generated_Presentation.pptx
+.gemini/
+brain/
+*.log
+output.txt
+layout.txt
+debug_content.py
+inspect_template.py
+old_file.py

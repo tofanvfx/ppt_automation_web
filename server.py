@@ -181,7 +181,9 @@ async def upload_and_convert(
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting PPT Automation server...")
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Starting PPT Automation server on port {port}...")
     print("Built-in SQLite auth initialized.")
-    print("Open http://localhost:8000 in your browser")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    if port == 8000:
+        print("Open http://localhost:8000 in your browser")
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
