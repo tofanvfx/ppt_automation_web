@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -103,9 +103,15 @@ async def serve_frontend():
 @app.post("/upload")
 async def upload_and_convert(
     files: list[UploadFile] = File(...),
-    token_payload: dict = Depends(require_role("ppt_generator"))
+    token_payload: dict = Depends(require_role("ppt_generator")),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """Accept multiple DOCX uploads, convert to PPTX, and return the file(s). Requires ppt_generator or admin role."""
+
+    def cleanup_job_dir(path: str):
+        """Remove the temporary job directory after file is sent."""
+        shutil.rmtree(path, ignore_errors=True)
+
     # Filter files to only those ending in .docx
     valid_files = [f for f in files if f.filename.lower().endswith(".docx")]
     if not valid_files:
@@ -139,12 +145,16 @@ async def upload_and_convert(
         if not generated_files:
             raise HTTPException(status_code=500, detail="Failed to generate any presentations.")
 
+        # Schedule cleanup after response is sent
+        background_tasks.add_task(cleanup_job_dir, str(job_dir))
+
         # If exactly one file was uploaded, return just that PPTX
         if len(generated_files) == 1:
             return FileResponse(
                 path=str(generated_files[0][1]),
                 filename=generated_files[0][0],
                 media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                background=background_tasks,
             )
             
         # If multiple files, zip them together
@@ -159,6 +169,7 @@ async def upload_and_convert(
             path=str(zip_path),
             filename=zip_filename,
             media_type="application/zip",
+            background=background_tasks,
         )
 
     except HTTPException:
