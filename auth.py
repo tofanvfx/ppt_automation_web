@@ -8,7 +8,11 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 
 # ── Config ───────────────────────────────────────────────────────────────────
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
+# ── Config ───────────────────────────────────────────────────────────────────
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/users.db"
+else:
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 # In production, use a secure secret key from env
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
 ALGORITHM = "HS256"

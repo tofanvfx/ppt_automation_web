@@ -13,6 +13,14 @@ from jose import JWTError, jwt
 
 # Add the project directory to path so we can import modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ── Config ───────────────────────────────────────────────────────────────────
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/users.db"
+    # For Vercel, we might need to copy an existing DB if present, 
+    # but for fresh starts let's just ensure it's in a writable location.
+else:
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 from docx_to_ppt import generate_ppt
 import auth
 
@@ -31,9 +39,12 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "template.pptx"
 
-# Temp directory for processing
-TEMP_DIR = BASE_DIR / "temp_uploads"
-TEMP_DIR.mkdir(exist_ok=True)
+# Temp directory for processing - use /tmp on Vercel
+if os.environ.get("VERCEL"):
+    TEMP_DIR = Path("/tmp/temp_uploads")
+else:
+    TEMP_DIR = BASE_DIR / "temp_uploads"
+TEMP_DIR.mkdir(exist_ok=True, parents=True)
 
 
 # ── Auth Dependencies ────────────────────────────────────────────────────────
