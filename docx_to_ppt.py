@@ -86,7 +86,7 @@ def generate_ppt(docx_path, template_path, output_path):
                 
         if name.replace("_", "").lower() in ('learningobjective', 'sstlopage', '1layoutsstlopage'):
             for layout in prs.slide_layouts:
-                if layout.name == '1_LAYOUT_sst_lo_page' or layout.name == 'LAYOUT_sst_lo_page':
+                if layout.name == 'LAYOUT_sst_lo_page' or layout.name == 'LAYOUT_sst_lo_page':
                     return layout
 
         if name.replace("_", "").lower() == 'mathlopage':
@@ -150,6 +150,11 @@ def generate_ppt(docx_path, template_path, output_path):
                 if layout.name == 'LAYOUT_sst_deafult_page':
                     return layout
 
+        if name.replace("_", "").lower() in ('sstactivitystaticpage', 'sst_activity_static_page', 'activitystaticpage'):
+            for layout in prs.slide_layouts:
+                if layout.name == 'LAYOUT_sst_activity_static_page':
+                    return layout
+
         return None
 
     # Nested dictionary to store templates per layout
@@ -167,12 +172,12 @@ def generate_ppt(docx_path, template_path, output_path):
         'LAYOUT_sst_activity_page_01': {'static_elements': [], 'text': []},
         'LAYOUT_sst_activity_page_02': {'static_elements': [], 'text': []},
         'LAYOUT_sst_deafult_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
-        'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []}
+        'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        'LAYOUT_sst_activity_static_page': {'static_elements': []}
     }
 
     # Extract lo_page group shape XML before processing slides
     lo_group_xmls = {
-        '1_LAYOUT_sst_lo_page': None,
         'LAYOUT_sst_lo_page': None,
         'LAYOUT_math_lo_page': None,
         'LAYOUT_sst_summary_page': None,
@@ -182,8 +187,11 @@ def generate_ppt(docx_path, template_path, output_path):
 
     # Store static title templates for lo/summary layouts where add_slide fails
     lo_title_xmls = {k: None for k in lo_group_xmls.keys()}
-    lo_title_xmls['1_LAYOUT_sst_lo_page'] = None # Ensure renamed one is included
+    lo_title_xmls['LAYOUT_sst_lo_page'] = None # Ensure renamed one is included
     lo_title_xmls['LAYOUT_sst_previous_page'] = None
+
+    # Store subtitle paragraph XML templates per layout (list of para XMLs for ilvl 1,2,3)
+    lo_subtitle_para_xmls = {k: [] for k in lo_group_xmls.keys()}
 
     for layout in prs.slide_layouts:
         if layout.name in lo_group_xmls:
@@ -191,6 +199,12 @@ def generate_ppt(docx_path, template_path, output_path):
                 if shape.shape_type == 6:  # msoGroup
                     for subshape in shape.shapes:
                         if getattr(subshape, 'has_text_frame', False) and 'Text goes here' in subshape.text:
+                            # Capture subtitle paragraph XML templates (paragraphs after the first)
+                            tf = subshape.text_frame
+                            for pi in range(1, len(tf.paragraphs)):
+                                lo_subtitle_para_xmls[layout.name].append(
+                                    copy.deepcopy(tf.paragraphs[pi]._p)
+                                )
                             lo_group_xmls[layout.name] = copy.deepcopy(shape.element)
                             shape.element.getparent().remove(shape.element)
                             break
@@ -275,7 +289,7 @@ def generate_ppt(docx_path, template_path, output_path):
                         'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', 
                         '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 
                         'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page',
-                        'LAYOUT_sst_notedown_page'
+                        'LAYOUT_sst_notedown_page', 'LAYOUT_sst_activity_static_page'
                     )
                     if is_static_layout:
                         templates['static_elements'].append(copy.deepcopy(shape.element))
@@ -715,26 +729,94 @@ def generate_ppt(docx_path, template_path, output_path):
                     for subshape in new_shape.shapes:
                         if getattr(subshape, 'has_text_frame', False) and 'Text goes here' in subshape.text:
                             tf = subshape.text_frame
+                            a_ns = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                            
+                            # Remove all paragraphs except the first (template subtitle paras)
+                            txBody = tf._txBody
+                            all_paras = txBody.findall(f'{{{a_ns}}}p')
+                            for extra_p in all_paras[1:]:
+                                txBody.remove(extra_p)
+                            
+                            # Vertically align text at top to match decorative shape position
+                            bodyPr = txBody.find(f'{{{a_ns}}}bodyPr')
+                            if bodyPr is not None:
+                                bodyPr.set('anchor', 't')
+                            
                             # Set main text in first paragraph
                             tf.paragraphs[0].text = main_text
                             for run in tf.paragraphs[0].runs:
                                 run.font.size = Pt(36)
                                 run.font.color.rgb = RGBColor(255, 255, 255)
+                            
+                            # Set spacing on main paragraph (0 before to align with shape, 600 after for gap)
+                            p0_pPr = tf.paragraphs[0]._p.find(f'{{{a_ns}}}pPr')
+                            if p0_pPr is not None:
+                                spcBef = p0_pPr.find(f'{{{a_ns}}}spcBef')
+                                if spcBef is not None:
+                                    spcPts = spcBef.find(f'{{{a_ns}}}spcPts')
+                                    if spcPts is not None:
+                                        spcPts.set('val', '0')  # No space before main text
+                                spcAft = p0_pPr.find(f'{{{a_ns}}}spcAft')
+                                if spcAft is not None:
+                                    spcPts = spcAft.find(f'{{{a_ns}}}spcPts')
+                                    if spcPts is not None:
+                                        spcPts.set('val', '600')
                         
-                            # Add sub-bullet paragraphs with nested indentation
+                            # Add sub-bullet paragraphs using cloned template XML
+                            subtitle_templates = lo_subtitle_para_xmls.get(layout.name, [])
                             for bullet_text, bullet_ilvl in sub_entries:
-                                p = tf.add_paragraph()
-                                # Indent and bullet marker based on nesting level
-                                indent = '    ' * bullet_ilvl
-                                markers = {1: '•', 2: '◦', 3: '▪'}
-                                marker = markers.get(bullet_ilvl, '▪')
-                                p.text = f'{indent}{marker} {bullet_text}'
-                                p.space_before = Pt(4)
-                                # Smaller font for deeper levels
-                                font_size = max(20, 36 - (bullet_ilvl * 4))
-                                for run in p.runs:
-                                    run.font.size = Pt(font_size)
-                                    run.font.color.rgb = RGBColor(255, 255, 255)
+                                # Pick the right template: ilvl 1 -> index 0, ilvl 2 -> index 1, etc.
+                                tmpl_idx = min(bullet_ilvl - 1, len(subtitle_templates) - 1) if subtitle_templates else -1
+                                if tmpl_idx >= 0:
+                                    # Clone the subtitle paragraph template
+                                    new_p = copy.deepcopy(subtitle_templates[tmpl_idx])
+                                    # Clear existing text runs
+                                    for r_elem in new_p.findall(f'{{{a_ns}}}r'):
+                                        new_p.remove(r_elem)
+                                    for fld_elem in new_p.findall(f'{{{a_ns}}}fld'):
+                                        new_p.remove(fld_elem)
+                                    # Remove endParaRPr if exists, we'll add fresh run
+                                    for endPr in new_p.findall(f'{{{a_ns}}}endParaRPr'):
+                                        new_p.remove(endPr)
+                                    
+                                    # Set consistent spacing
+                                    pPr = new_p.find(f'{{{a_ns}}}pPr')
+                                    if pPr is not None:
+                                        spcBef = pPr.find(f'{{{a_ns}}}spcBef')
+                                        if spcBef is not None:
+                                            spcPts = spcBef.find(f'{{{a_ns}}}spcPts')
+                                            if spcPts is not None:
+                                                spcPts.set('val', '600')  # 6pt consistent spacing
+                                        spcAft = pPr.find(f'{{{a_ns}}}spcAft')
+                                        if spcAft is not None:
+                                            spcPts = spcAft.find(f'{{{a_ns}}}spcPts')
+                                            if spcPts is not None:
+                                                spcPts.set('val', '600')
+                                    
+                                    # Create a new run element with the bullet text
+                                    r_elem = parse_xml(
+                                        f'<a:r xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                                        f'<a:rPr lang="en-US" sz="{max(2000, 3200 - (bullet_ilvl * 400))}" dirty="0">'
+                                        f'<a:solidFill><a:schemeClr val="bg1"/></a:solidFill>'
+                                        f'<a:latin typeface="Calibri"/>'
+                                        f'<a:ea typeface="Calibri"/>'
+                                        f'<a:cs typeface="Calibri"/>'
+                                        f'</a:rPr>'
+                                        f'<a:t>{bullet_text}</a:t>'
+                                        f'</a:r>'
+                                    )
+                                    new_p.append(r_elem)
+                                    txBody.append(new_p)
+                                else:
+                                    # Fallback if no subtitle templates are available
+                                    p = tf.add_paragraph()
+                                    p.text = bullet_text
+                                    p.space_before = Pt(6)
+                                    p.space_after = Pt(6)
+                                    p.level = bullet_ilvl
+                                    for run in p.runs:
+                                        run.font.size = Pt(max(20, 36 - (bullet_ilvl * 4)))
+                                        run.font.color.rgb = RGBColor(255, 255, 255)
                 
                     # Calculate height based on content
                     chars_per_line = 65
@@ -1296,6 +1378,18 @@ def generate_ppt(docx_path, template_path, output_path):
             # Use centralized metadata injection for topic/subtopic
             apply_metadata_to_slide(slide, {})
             print(f"Inserted {layout.name} with all background elements")
+
+        elif layout.name == 'LAYOUT_sst_activity_static_page':
+            templates = sst_content_templates.get(layout.name, {})
+            # Inject all static elements from layout
+            for static_elem in templates.get('static_elements', []):
+                elem_copy = remove_locks(copy.deepcopy(static_elem))
+                copy_image_rels(elem_copy, layout.part, slide.part)
+                slide.shapes._spTree.append(elem_copy)
+            
+            # Use centralized metadata injection for topic/subtopic
+            apply_metadata_to_slide(slide, {})
+            print(f"Inserted {layout.name} as static slide")
 
         # After processing the section and adding elements, check if we need to overlay SYR
         if section.get('has_syr'):
