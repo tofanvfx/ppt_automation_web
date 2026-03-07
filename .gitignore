@@ -12,6 +12,7 @@ __pycache__/
 
 # Debug/Logs
 *.txt
+!requirements.txt
 *.log
 
 # Scripts / Misc

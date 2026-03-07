@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-docx
+python-pptx
+python-jose[cryptography]
+bcrypt
+python-multipart
+Pillow
+lxml
+python-dotenv
