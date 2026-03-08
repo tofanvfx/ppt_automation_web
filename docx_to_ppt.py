@@ -179,6 +179,7 @@ def generate_ppt(docx_path, template_path, output_path):
         'LAYOUT_sst_activity_page_02': {'static_elements': [], 'text': []},
         'LAYOUT_sst_deafult_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
+        'LAYOUT_math_content_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_sst_activity_static_page': {'static_elements': []}
     }
 
@@ -298,6 +299,7 @@ def generate_ppt(docx_path, template_path, output_path):
                         'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', 
                         '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 
                         'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page',
+                        'LAYOUT_math_content_page',
                         'LAYOUT_sst_notedown_page', 'LAYOUT_sst_activity_static_page'
                     )
                     if is_static_layout:
@@ -653,11 +655,17 @@ def generate_ppt(docx_path, template_path, output_path):
 
     for section in sections:
         sname = section['name'].strip().lower()
-        if sname == 'sst_content_page':
+        if sname in ('sst_content_page', 'math_content_page'):
             if len(section.get('images', [])) > 1:
-                layout = get_layout('sst_content_page_02')
+                if sname == 'math_content_page':
+                    layout = get_layout('math_content_page_02') or get_layout('sst_content_page_02')
+                else:
+                    layout = get_layout('sst_content_page_02')
             else:
-                layout = get_layout('sst_content_page_01')
+                if sname == 'math_content_page':
+                    layout = get_layout('math_content_page_01') or get_layout('sst_content_page_01')
+                else:
+                    layout = get_layout('sst_content_page_01')
         elif sname in ('sst_quiztime_page', 'quiztime_page', 'sstquiztimepage'):
             # Parse quiz content first to determine layout
             quiz_data = {'question': '', 'options': []}
@@ -1014,7 +1022,7 @@ def generate_ppt(docx_path, template_path, output_path):
             # Use centralized metadata injection for topic/subtopic
             apply_metadata_to_slide(slide, {})
             quiz_data = None  # Reset for next quiz section
-        elif layout.name in ('LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page'):
+        elif layout.name in ('LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page', 'LAYOUT_math_content_page'):
             data = {}
             data_text_list = []
             has_local_topic = False
