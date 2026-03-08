@@ -593,7 +593,7 @@ def generate_ppt(docx_path, template_path, output_path):
                             else:
                                 val = topic_val or subtopic_val
                         else:
-                            val = merged_data.get('subtopic') or merged_data.get('topic')
+                            val = merged_data.get('subtopic')
                             
                         if val:
                             replace_text_preserve_format(shape, val, center=True, layout_name=slide.slide_layout.name)
@@ -1070,7 +1070,7 @@ def generate_ppt(docx_path, template_path, output_path):
                 slide.shapes._spTree.append(topic_elem)
                 shape_elements.append(slide.shapes[-1])
             
-            if templates.get('subtopic') is not None:
+            if templates.get('subtopic') is not None and data.get('subtopic'):
                 subtopic_elem = copy.deepcopy(templates['subtopic'])
                 slide.shapes._spTree.append(subtopic_elem)
                 shape_elements.append(slide.shapes[-1])
@@ -1085,7 +1085,7 @@ def generate_ppt(docx_path, template_path, output_path):
                     text_elem = copy.deepcopy(text_elem_xml)
                     
                     # If no subtopic in data, shift the text box up to the subtopic's position
-                    if 'subtopic' not in data and templates.get('subtopic') is not None:
+                    if not data.get('subtopic') and templates.get('subtopic') is not None:
                         sub_xml = templates['subtopic']
                         ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
                         sub_off = sub_xml.find('.//a:off', namespaces=ns)
