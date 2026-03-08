@@ -17,7 +17,12 @@ from pptx.oxml import parse_xml
 from PIL import Image
 
 
-def generate_ppt(docx_path, template_path, output_path):
+def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
+    def report_progress(percentage, status):
+        if progress_callback:
+            progress_callback(percentage, status)
+
+    report_progress(2, "Initializing...")
     prs = Presentation(template_path)
     doc = Document(docx_path)
 
@@ -179,7 +184,6 @@ def generate_ppt(docx_path, template_path, output_path):
         'LAYOUT_sst_activity_page_02': {'static_elements': [], 'text': []},
         'LAYOUT_sst_deafult_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_math_default_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
-        'LAYOUT_math_content_page': {'topic': None, 'subtopic': None, 'text': [], 'static_elements': []},
         'LAYOUT_sst_activity_static_page': {'static_elements': []}
     }
 
@@ -299,7 +303,6 @@ def generate_ppt(docx_path, template_path, output_path):
                         'LAYOUT_sst_activity_page_02', 'LAYOUT_sst_content_page_01', 
                         '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 
                         'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page',
-                        'LAYOUT_math_content_page',
                         'LAYOUT_sst_notedown_page', 'LAYOUT_sst_activity_static_page'
                     )
                     if is_static_layout:
@@ -408,8 +411,7 @@ def generate_ppt(docx_path, template_path, output_path):
             if not content_data and not images_to_add:
                 continue
             
-            # if isinstance(content_data, list):
-            #     print(f"DEBUG: Processing content_data list of length {len(content_data)}")
+            # Get plain text for regex matching
             if isinstance(content_data, list):
                 search_text = "".join(p['value'] if p['type'] == 'text' else '' for p in content_data)
             else:
@@ -459,6 +461,8 @@ def generate_ppt(docx_path, template_path, output_path):
                 if images_to_add:
                     current_section['images'].extend(images_to_add)
                     images_to_add = []
+
+    report_progress(10, "Document parsed. Generating slides...")
 
     def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None):
         if not shape.has_text_frame:
@@ -533,7 +537,6 @@ def generate_ppt(docx_path, template_path, output_path):
             ]
 
             for part in parts:
-                print(f"DEBUG: Processing part type: {part.get('type')}")
                 if part['type'] == 'text':
                     new_run = p.add_run()
                     new_run.text = part['value']
@@ -566,7 +569,6 @@ def generate_ppt(docx_path, template_path, output_path):
                     # Inject OMML XML
                     try:
                         from lxml.etree import fromstring as parse_xml
-                        p.add_run().text = " "  # Force a run to exist
                         math_elem = parse_xml(part['value'])
                         p._p.append(math_elem)
                     except Exception as e:
@@ -656,19 +658,17 @@ def generate_ppt(docx_path, template_path, output_path):
 
         process_shape_list(slide.shapes)
 
-    for section in sections:
+    total_sections = len(sections)
+    for i, section in enumerate(sections):
+        progress = 10 + int((i / total_sections) * 85)
+        report_progress(progress, f"Generating slide {i+1} of {total_sections}: {section['name']}...")
+        
         sname = section['name'].strip().lower()
-        if sname in ('sst_content_page', 'math_content_page'):
+        if sname == 'sst_content_page':
             if len(section.get('images', [])) > 1:
-                if sname == 'math_content_page':
-                    layout = get_layout('math_content_page_02') or get_layout('sst_content_page_02')
-                else:
-                    layout = get_layout('sst_content_page_02')
+                layout = get_layout('sst_content_page_02')
             else:
-                if sname == 'math_content_page':
-                    layout = get_layout('math_content_page_01') or get_layout('sst_content_page_01')
-                else:
-                    layout = get_layout('sst_content_page_01')
+                layout = get_layout('sst_content_page_01')
         elif sname in ('sst_quiztime_page', 'quiztime_page', 'sstquiztimepage'):
             # Parse quiz content first to determine layout
             quiz_data = {'question': '', 'options': []}
@@ -704,10 +704,9 @@ def generate_ppt(docx_path, template_path, output_path):
             layout = get_layout(section['name'])
 
         if not layout:
-            print(f"DEBUG: Skipping section [{section['name']}], layout NOT FOUND.")
+            print(f"Skipping section [{section['name']}], layout not found.")
             continue
         
-        print(f"DEBUG: Processing section [{section['name']}] with layout [{layout.name}]")
         slide = prs.slides.add_slide(layout)
     
         if section['name'].replace("_", "").lower() in ('mathpagetitle', 'mathtitlepage', 'sstpagetitle', 'ssttitlepage'):
@@ -1026,7 +1025,7 @@ def generate_ppt(docx_path, template_path, output_path):
             # Use centralized metadata injection for topic/subtopic
             apply_metadata_to_slide(slide, {})
             quiz_data = None  # Reset for next quiz section
-        elif layout.name in ('LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page', 'LAYOUT_math_content_page'):
+        elif layout.name in ('LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02', 'LAYOUT_sst_deafult_page', 'LAYOUT_math_default_page'):
             data = {}
             data_text_list = []
             has_local_topic = False
@@ -1037,10 +1036,8 @@ def generate_ppt(docx_path, template_path, output_path):
                 if isinstance(content_obj, list):
                     # For parsing Topic/Subtopic, we need the plain text
                     line = "".join([p['value'] for p in content_obj if p['type'] == 'text'])
-                    has_math = any(p['type'] == 'math' for p in content_obj)
                 else:
                     line = str(content_obj)
-                    has_math = False
                     
                 line_low = line.lower()
             
@@ -1061,7 +1058,7 @@ def generate_ppt(docx_path, template_path, output_path):
                         data_text_list.append((content_obj, ilvl))
                     else:
                         data_text_list.append((content_obj, ilvl))
-                elif line.strip() or has_math:
+                elif line.strip():
                     data_text_list.append((content_obj, ilvl))
                 
             # Fallback to global metadata
@@ -1117,16 +1114,13 @@ def generate_ppt(docx_path, template_path, output_path):
                             if getattr(sub, 'has_text_frame', False) and \
                                ('text goes here' in sub.text.lower() or 'click to edit' in sub.text.lower()):
                                 text_shapes.append(sub)
-                    if getattr(new_shape, 'has_text_frame', False):
+                    elif getattr(new_shape, 'has_text_frame', False):
                         # Even if it contains other master text, if it came from the 'text' template, it's our target
                         text_shapes.append(new_shape)
-            
-            print(f"DEBUG: Found {len(text_shapes)} text shapes on this slide")
             
             # Insert text and subtexts
             if text_shapes and 'text' in data:
                 paragraphs = data['text']
-                # print(f"DEBUG: Inserting {len(paragraphs)} paragraphs into text_shapes (found {len(text_shapes)})")
                 if len(text_shapes) > 1 and len(paragraphs) > 1:
                     # Distribute paragraphs across text shapes evenly
                     from math import ceil
@@ -1562,7 +1556,9 @@ def generate_ppt(docx_path, template_path, output_path):
                                         p.alignment = align
                 print(f"Overlaid LAYOUT_ask_question with text: '{ask_q_text}'")
 
+    report_progress(96, "Saving presentation...")
     prs.save(output_path)
+    report_progress(100, "Done!")
 
 if __name__ == "__main__":
     generate_ppt("content.docx", "template.pptx", "Generated_Presentation.pptx")

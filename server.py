@@ -9,7 +9,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form, Bac
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from jose import JWTError, jwt
+import asyncio
 
 # Add the project directory to path so we can import modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +47,9 @@ if os.environ.get("VERCEL"):
 else:
     TEMP_DIR = BASE_DIR / "temp_uploads"
 TEMP_DIR.mkdir(exist_ok=True, parents=True)
+
+# Global progress storage
+progress_states = {}
 
 
 # ── Auth Dependencies ────────────────────────────────────────────────────────
@@ -111,17 +116,44 @@ async def serve_frontend():
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 
 
+@app.get("/progress/{job_id}")
+async def get_progress(job_id: str):
+    """Stream progress updates for a specific job."""
+    async def event_generator():
+        while True:
+            state = progress_states.get(job_id)
+            if not state:
+                # If job not found, it might haven't started yet or finished & cleaned up
+                yield f"data: {{\"percentage\": 0, \"status\": \"Waiting...\"}}\n\n"
+            else:
+                yield f"data: {{\"percentage\": {state['percentage']}, \"status\": \"{state['status']}\"}}\n\n"
+                if state['percentage'] >= 100:
+                    break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.post("/upload")
 async def upload_and_convert(
     files: list[UploadFile] = File(...),
+    job_id: str = Form(None),
     token_payload: dict = Depends(require_role("ppt_generator")),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """Accept multiple DOCX uploads, convert to PPTX, and return the file(s). Requires ppt_generator or admin role."""
 
-    def cleanup_job_dir(path: str):
-        """Remove the temporary job directory after file is sent."""
+    def cleanup_job_id(jid: str):
+        """Remove the job from progress tracking."""
+        # Delay cleanup slightly to ensure frontend sees 100%
+        import time
+        time.sleep(5)
+        progress_states.pop(jid, None)
+
+    def cleanup_job_all(path: str, jid: str):
+        """Remove temp dir and progress state."""
         shutil.rmtree(path, ignore_errors=True)
+        progress_states.pop(jid, None)
 
     # Filter files to only those ending in .docx
     valid_files = [f for f in files if f.filename.lower().endswith(".docx")]
@@ -129,7 +161,12 @@ async def upload_and_convert(
         raise HTTPException(status_code=400, detail="No .docx files were provided.")
 
     username = token_payload.get("sub", "unknown")
-    job_id = str(uuid.uuid4())[:8]
+    
+    # If job_id not provided by frontend, generate one (though frontend should provide it for tracking)
+    if not job_id:
+        job_id = str(uuid.uuid4())[:8]
+        
+    progress_states[job_id] = {"percentage": 0, "status": "Starting..."}
     job_dir = TEMP_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -144,10 +181,15 @@ async def upload_and_convert(
             docx_path.write_bytes(content)
 
             print(f"[{username}] Generating PPT from {file.filename}...")
+            
+            def on_progress(percentage, status):
+                progress_states[job_id] = {"percentage": percentage, "status": status}
+
             generate_ppt(
                 docx_path=str(docx_path),
                 template_path=str(TEMPLATE_PATH),
                 output_path=str(output_path),
+                progress_callback=on_progress
             )
 
             if output_path.exists():
@@ -157,7 +199,7 @@ async def upload_and_convert(
             raise HTTPException(status_code=500, detail="Failed to generate any presentations.")
 
         # Schedule cleanup after response is sent
-        background_tasks.add_task(cleanup_job_dir, str(job_dir))
+        background_tasks.add_task(cleanup_job_all, str(job_dir), job_id)
 
         # If exactly one file was uploaded, return just that PPTX
         if len(generated_files) == 1:
