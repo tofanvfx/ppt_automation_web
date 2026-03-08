@@ -408,7 +408,8 @@ def generate_ppt(docx_path, template_path, output_path):
             if not content_data and not images_to_add:
                 continue
             
-            # Get plain text for regex matching
+            # if isinstance(content_data, list):
+            #     print(f"DEBUG: Processing content_data list of length {len(content_data)}")
             if isinstance(content_data, list):
                 search_text = "".join(p['value'] if p['type'] == 'text' else '' for p in content_data)
             else:
@@ -532,6 +533,7 @@ def generate_ppt(docx_path, template_path, output_path):
             ]
 
             for part in parts:
+                print(f"DEBUG: Processing part type: {part.get('type')}")
                 if part['type'] == 'text':
                     new_run = p.add_run()
                     new_run.text = part['value']
@@ -564,6 +566,7 @@ def generate_ppt(docx_path, template_path, output_path):
                     # Inject OMML XML
                     try:
                         from lxml.etree import fromstring as parse_xml
+                        p.add_run().text = " "  # Force a run to exist
                         math_elem = parse_xml(part['value'])
                         p._p.append(math_elem)
                     except Exception as e:
@@ -701,9 +704,10 @@ def generate_ppt(docx_path, template_path, output_path):
             layout = get_layout(section['name'])
 
         if not layout:
-            print(f"Skipping section [{section['name']}], layout not found.")
+            print(f"DEBUG: Skipping section [{section['name']}], layout NOT FOUND.")
             continue
         
+        print(f"DEBUG: Processing section [{section['name']}] with layout [{layout.name}]")
         slide = prs.slides.add_slide(layout)
     
         if section['name'].replace("_", "").lower() in ('mathpagetitle', 'mathtitlepage', 'sstpagetitle', 'ssttitlepage'):
@@ -1033,8 +1037,10 @@ def generate_ppt(docx_path, template_path, output_path):
                 if isinstance(content_obj, list):
                     # For parsing Topic/Subtopic, we need the plain text
                     line = "".join([p['value'] for p in content_obj if p['type'] == 'text'])
+                    has_math = any(p['type'] == 'math' for p in content_obj)
                 else:
                     line = str(content_obj)
+                    has_math = False
                     
                 line_low = line.lower()
             
@@ -1055,7 +1061,7 @@ def generate_ppt(docx_path, template_path, output_path):
                         data_text_list.append((content_obj, ilvl))
                     else:
                         data_text_list.append((content_obj, ilvl))
-                elif line.strip():
+                elif line.strip() or has_math:
                     data_text_list.append((content_obj, ilvl))
                 
             # Fallback to global metadata
@@ -1111,13 +1117,16 @@ def generate_ppt(docx_path, template_path, output_path):
                             if getattr(sub, 'has_text_frame', False) and \
                                ('text goes here' in sub.text.lower() or 'click to edit' in sub.text.lower()):
                                 text_shapes.append(sub)
-                    elif getattr(new_shape, 'has_text_frame', False):
+                    if getattr(new_shape, 'has_text_frame', False):
                         # Even if it contains other master text, if it came from the 'text' template, it's our target
                         text_shapes.append(new_shape)
+            
+            print(f"DEBUG: Found {len(text_shapes)} text shapes on this slide")
             
             # Insert text and subtexts
             if text_shapes and 'text' in data:
                 paragraphs = data['text']
+                # print(f"DEBUG: Inserting {len(paragraphs)} paragraphs into text_shapes (found {len(text_shapes)})")
                 if len(text_shapes) > 1 and len(paragraphs) > 1:
                     # Distribute paragraphs across text shapes evenly
                     from math import ceil
