@@ -17,7 +17,12 @@ from pptx.oxml import parse_xml
 from PIL import Image
 
 
-def generate_ppt(docx_path, template_path, output_path):
+def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
+    def report_progress(percentage, status):
+        if progress_callback:
+            progress_callback(percentage, status)
+
+    report_progress(2, "Initializing...")
     prs = Presentation(template_path)
     doc = Document(docx_path)
 
@@ -514,6 +519,8 @@ def generate_ppt(docx_path, template_path, output_path):
                     current_section['images'].extend(images_to_add)
                     images_to_add = []
 
+    report_progress(10, "Document parsed. Generating slides...")
+
     def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None):
         if not shape.has_text_frame:
             return
@@ -650,7 +657,7 @@ def generate_ppt(docx_path, template_path, output_path):
                             else:
                                 val = topic_val or subtopic_val
                         else:
-                            val = merged_data.get('subtopic') or merged_data.get('topic')
+                            val = merged_data.get('subtopic')
                             
                         if val:
                             replace_text_preserve_format(shape, val, center=True, layout_name=slide.slide_layout.name)
@@ -708,7 +715,11 @@ def generate_ppt(docx_path, template_path, output_path):
 
         process_shape_list(slide.shapes)
 
-    for section in sections:
+    total_sections = len(sections)
+    for i, section in enumerate(sections):
+        progress = 10 + int((i / total_sections) * 85)
+        report_progress(progress, f"Generating slide {i+1} of {total_sections}: {section['name']}...")
+        
         sname = section['name'].strip().lower()
         if sname == 'sst_content_page':
             if len(section.get('images', [])) > 1:
@@ -1129,7 +1140,7 @@ def generate_ppt(docx_path, template_path, output_path):
                 slide.shapes._spTree.append(topic_elem)
                 shape_elements.append(slide.shapes[-1])
             
-            if templates.get('subtopic') is not None:
+            if templates.get('subtopic') is not None and data.get('subtopic'):
                 subtopic_elem = copy.deepcopy(templates['subtopic'])
                 slide.shapes._spTree.append(subtopic_elem)
                 shape_elements.append(slide.shapes[-1])
@@ -1144,7 +1155,7 @@ def generate_ppt(docx_path, template_path, output_path):
                     text_elem = copy.deepcopy(text_elem_xml)
                     
                     # If no subtopic in data, shift the text box up to the subtopic's position
-                    if 'subtopic' not in data and templates.get('subtopic') is not None:
+                    if not data.get('subtopic') and templates.get('subtopic') is not None:
                         sub_xml = templates['subtopic']
                         ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
                         sub_off = sub_xml.find('.//a:off', namespaces=ns)
@@ -1609,7 +1620,9 @@ def generate_ppt(docx_path, template_path, output_path):
         # Finally, inject logo elements on top of everything else
         inject_logo(slide)
 
+    report_progress(96, "Saving presentation...")
     prs.save(output_path)
+    report_progress(100, "Done!")
 
 if __name__ == "__main__":
     generate_ppt("content.docx", "template.pptx", "Generated_Presentation.pptx")
