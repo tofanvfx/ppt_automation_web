@@ -63,6 +63,45 @@ def generate_ppt(docx_path, template_path, output_path):
             lock.getparent().remove(lock)
         return element
 
+    def apply_locks(element):
+        """Add protection locks to all shapes within an element to prevent interaction and show lock icon in Selection Pane."""
+        ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+              'p': 'http://schemas.openxmlformats.org/officeDocument/2006/main',
+              'p_main': 'http://schemas.openxmlformats.org/presentationml/2006/main'}
+        
+        # We need to find all types of non-visual properties: shapes, pictures, groups, connectors
+        # Presentation elements (p:pic, p:sp, etc.) use the presentationml namespace
+        targets = [
+            ('.//p_main:nvSpPr', 'p_main:cNvSpPr', 'a:spLocks'),
+            ('.//p_main:nvPicPr', 'p_main:cNvPicPr', 'a:picLocks'),
+            ('.//p_main:nvGrpSpPr', 'p_main:cNvGrpSpPr', 'a:grpSpLocks'),
+            ('.//p_main:nvCxnSpPr', 'p_main:cNvCxnSpPr', 'a:cxnSpLocks')
+        ]
+        
+        for search_xpath, cNvPr_tag, lock_tag in targets:
+            # Find all candidates (root + descendants)
+            candidates = []
+            # Check descendants
+            candidates.extend(element.findall(search_xpath, namespaces=ns))
+            # Check root
+            root_tag_local = search_xpath.split(':')[-1]
+            if f"{{{ns['p_main']}}}{root_tag_local}" == element.tag:
+                candidates.append(element)
+
+            for nvPr in candidates:
+                cNvPr = nvPr.find(cNvPr_tag, namespaces=ns)
+                if cNvPr is not None:
+                    locks = cNvPr.find(lock_tag, namespaces=ns)
+                    if locks is None:
+                        # Create new locks element
+                        locks = parse_xml(f'<a:{lock_tag.split(":")[1]} xmlns:a="{ns["a"]}" noGrp="1" noSelect="1" noRot="1" noChangeAspect="1" noMove="1" noResize="1" noEditPoints="1" noAdjustHandles="1" noChangeArrowheads="1" noChangeShapeType="1" noTextEdit="1"/>')
+                        cNvPr.append(locks)
+                    else:
+                        # Update existing locks
+                        for attr in ("noGrp", "noSelect", "noRot", "noChangeAspect", "noMove", "noResize", "noEditPoints", "noAdjustHandles", "noChangeArrowheads", "noChangeShapeType", "noTextEdit"):
+                            locks.set(attr, "1")
+        return element
+
     def get_layout(name):
         for layout in prs.slide_layouts:
             if layout.name == f"LAYOUT_{name}":
@@ -199,6 +238,18 @@ def generate_ppt(docx_path, template_path, output_path):
     # Store subtitle paragraph XML templates per layout (list of para XMLs for ilvl 1,2,3)
     lo_subtitle_para_xmls = {k: [] for k in lo_group_xmls.keys()}
 
+    # Capture logo elements to be added to every slide
+    logo_elements = []
+    logo_source_part = None
+
+    def inject_logo(target_slide):
+        """Inject captured logo elements onto a target slide and lock them."""
+        for logo_xml in logo_elements:
+            new_logo_elem = apply_locks(copy.deepcopy(logo_xml))
+            target_slide.shapes._spTree.append(new_logo_elem)
+            if logo_source_part:
+                copy_image_rels(new_logo_elem, logo_source_part, target_slide.part)
+
     for layout in prs.slide_layouts:
         if layout.name in lo_group_xmls:
             for shape in layout.shapes:
@@ -216,6 +267,12 @@ def generate_ppt(docx_path, template_path, output_path):
                             break
                     if lo_group_xmls[layout.name] is not None:
                         break
+    
+        if layout.name == "LAYOUT_logo":
+            logo_source_part = layout.part
+            for shape in list(layout.shapes):
+                logo_elements.append(copy.deepcopy(shape.element))
+                shape.element.getparent().remove(shape.element)
     
         if layout.name in lo_title_xmls:
             for shape in layout.shapes:
@@ -697,6 +754,8 @@ def generate_ppt(docx_path, template_path, output_path):
             continue
         
         slide = prs.slides.add_slide(layout)
+
+    
     
         if section['name'].replace("_", "").lower() in ('mathpagetitle', 'mathtitlepage', 'sstpagetitle', 'ssttitlepage'):
             data = {}
@@ -1341,11 +1400,13 @@ def generate_ppt(docx_path, template_path, output_path):
             for q, a in qa_pairs:
                 if layout_q:
                     s_q = prs.slides.add_slide(layout_q)
+                    inject_logo(s_q)
                     for shape in s_q.shapes:
                         if shape.is_placeholder and shape.placeholder_format.idx == 0:
                             shape.text = q
                 if layout_a:
                     s_a = prs.slides.add_slide(layout_a)
+                    inject_logo(s_a)
                     for shape in s_a.shapes:
                         if shape.is_placeholder and shape.placeholder_format.idx == 0:
                             shape.text = a
@@ -1544,6 +1605,9 @@ def generate_ppt(docx_path, template_path, output_path):
                                     for p in sub.text_frame.paragraphs:
                                         p.alignment = align
                 print(f"Overlaid LAYOUT_ask_question with text: '{ask_q_text}'")
+        
+        # Finally, inject logo elements on top of everything else
+        inject_logo(slide)
 
     prs.save(output_path)
 
