@@ -24,6 +24,7 @@ if os.environ.get("VERCEL"):
 else:
     DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 from docx_to_ppt import generate_ppt
+from worksheet_generator.worksheet_generator import generate as generate_worksheet
 import auth
 
 # ── App Setup ────────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ app.add_middleware(
 # Path to the template file
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "template.pptx"
+WORKSHEET_TEMPLATE_PATH = BASE_DIR / "worksheet_generator" / "worksheet_test.pptx"
 
 # Temp directory for processing - use /tmp on Vercel
 if os.environ.get("VERCEL"):
@@ -230,6 +232,89 @@ async def upload_and_convert(
     except Exception as e:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"Error generating PPT: {str(e)}")
+
+
+@app.post("/upload-worksheet")
+async def upload_worksheet(
+    files: list[UploadFile] = File(...),
+    job_id: str = Form(None),
+    token_payload: dict = Depends(require_role("ppt_generator")),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """Accept DOCX uploads, convert to Worksheet PPTX, and return the file(s)."""
+
+    def cleanup_job_all(path: str, jid: str):
+        shutil.rmtree(path, ignore_errors=True)
+        progress_states.pop(jid, None)
+
+    valid_files = [f for f in files if f.filename.lower().endswith(".docx")]
+    if not valid_files:
+        raise HTTPException(status_code=400, detail="No .docx files were provided.")
+
+    username = token_payload.get("sub", "unknown")
+    if not job_id:
+        job_id = str(uuid.uuid4())[:8]
+        
+    progress_states[job_id] = {"percentage": 0, "status": "Starting..."}
+    job_dir = TEMP_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        generated_files = []
+        for file in valid_files:
+            docx_path = job_dir / file.filename
+            output_filename = file.filename.rsplit(".", 1)[0] + "_Worksheet.pptx"
+            output_path = job_dir / output_filename
+
+            content = await file.read()
+            docx_path.write_bytes(content)
+
+            print(f"[{username}] Generating Worksheet from {file.filename}...")
+            
+            def on_progress(percentage, status):
+                progress_states[job_id] = {"percentage": percentage, "status": status}
+
+            generate_worksheet(
+                docx_path=str(docx_path),
+                template_pptx=str(WORKSHEET_TEMPLATE_PATH),
+                output_pptx=str(output_path),
+                progress_callback=on_progress
+            )
+
+            if output_path.exists():
+                generated_files.append((output_filename, output_path))
+
+        if not generated_files:
+            raise HTTPException(status_code=500, detail="Failed to generate any worksheets.")
+
+        background_tasks.add_task(cleanup_job_all, str(job_dir), job_id)
+
+        if len(generated_files) == 1:
+            return FileResponse(
+                path=str(generated_files[0][1]),
+                filename=generated_files[0][0],
+                media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                background=background_tasks,
+            )
+            
+        zip_filename = f"Generated_Worksheets_{job_id}.zip"
+        zip_path = job_dir / zip_filename
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for out_name, out_path in generated_files:
+                zipf.write(out_path, arcname=out_name)
+                
+        return FileResponse(
+            path=str(zip_path),
+            filename=zip_filename,
+            media_type="application/zip",
+            background=background_tasks,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Error generating Worksheet: {str(e)}")
 
 
 if __name__ == "__main__":
