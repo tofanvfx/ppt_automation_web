@@ -6,6 +6,7 @@ __pycache__/
 # PowerPoint / Word
 *.pptx
 !template.pptx
+!worksheet_generator/worksheet_test.pptx
 *.docx
 !content.docx
 ~$*
