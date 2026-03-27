@@ -1420,6 +1420,11 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     break
         
             if pic_ph is not None and images:
+                # Remove any default images copied from the layout to avoid overlap
+                for shp in list(slide.shapes):
+                    if shp.shape_type == 13: # PICTURE
+                        shp.element.getparent().remove(shp.element)
+                        
                 # Capture properties of the placeholder
                 left, top, total_width, total_height = pic_ph.left, pic_ph.top, pic_ph.width, pic_ph.height
                 num_images = len(images)
