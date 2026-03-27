@@ -1399,7 +1399,15 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                 
                     # Move everything below it down (e.g. discussion group)
                     for other_shape in slide.shapes:
-                        if other_shape != shape and other_shape.top > shape.top:
+                        # Skip if it is the picture placeholder
+                        if getattr(other_shape, 'is_placeholder', False) and other_shape.placeholder_format.type == 18:
+                            continue
+                        # Skip if it is a standard picture (the default image)
+                        if other_shape.shape_type == 13: # PICTURE
+                            continue
+                            
+                        # Use old_h to only match shapes TRULY below the text box (giving 0.1 inch buffer)
+                        if other_shape != shape and other_shape.top >= (shape.top + old_h - 91440):
                              # Use a bit more buffer when moving things down
                              other_shape.top += extra_h + 100000
 
