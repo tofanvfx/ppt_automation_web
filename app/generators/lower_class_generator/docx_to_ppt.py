@@ -394,11 +394,25 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
         if isinstance(item, Paragraph):
             # Detect indent level from numPr/ilvl
             ilvl = 0
+            is_list = False
             numPr = item._element.find(f'.//{{{w_ns}}}numPr')
             if numPr is not None:
+                is_list = True
                 ilvl_elem = numPr.find(f'{{{w_ns}}}ilvl')
                 if ilvl_elem is not None:
                     ilvl = int(ilvl_elem.get(f'{{{w_ns}}}val', '0'))
+            
+            # Also check the style name for list level (handles 'List Bullet 2', etc.)
+            # This serves as both detection and level override when ilvl is not set by numPr
+            style_name = item.style.name if item.style else ''
+            if style_name and ('List' in style_name or 'Bullet' in style_name):
+                is_list = True
+                import re as _re
+                m = _re.search(r'\d+', style_name)
+                if m:
+                    style_level = max(0, int(m.group(0)) - 1)
+                    if ilvl == 0 and style_level > 0:
+                        ilvl = style_level
         
             # Check for math equations (OMML) and normal text runs
             # We iterate through all children of the paragraph element to preserve order
@@ -438,9 +452,9 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
         
             # If parts is empty, fall back to plain text
             if not parts:
-                lines_to_process.append((item.text.strip(), ilvl))
+                lines_to_process.append((item.text.strip(), ilvl, is_list))
             else:
-                lines_to_process.append((parts, ilvl))
+                lines_to_process.append((parts, ilvl, is_list))
             
             # Extract images from paragraph
             for run in item.runs:
@@ -521,7 +535,7 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
 
     report_progress(10, "Document parsed. Generating slides...")
 
-    def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None):
+    def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None, is_body_text=False):
         if not shape.has_text_frame:
             return
         tf = shape.text_frame
@@ -569,11 +583,66 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
             
             # para_data can be a string, a tuple (content, level), or a list of parts
             level = 0
+            is_list = False
             if isinstance(para_data, tuple):
                 level = para_data[1]
+                if len(para_data) > 2:
+                    is_list = para_data[2]
                 para_data = para_data[0]
-            
+
+            # Set the paragraph indent level
             p.level = level
+
+            # Bullet handling:
+            a_ns = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+            pPr = p._p.find(f'{{{a_ns}}}pPr')
+            if pPr is None:
+                from lxml.etree import SubElement
+                pPr = SubElement(p._p, f'{{{a_ns}}}pPr')
+                p._p.insert(0, pPr)
+
+            is_sst_content = is_body_text and layout_name in ('LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02')
+            
+            if is_sst_content:
+                # User wants any paragraph in sst_content_page body to be a bullet
+                is_list = True
+
+                if True:
+                    from lxml.etree import fromstring as parse_xml
+                    # Clean existing bullet definitions
+                    for child in list(pPr):
+                        tag = child.tag
+                        if any(tag.endswith(s) for s in ('}buNone', '}buAutoNum', '}buChar', '}buFont', '}buClr', '}buSzPct', '}buSzPts', '}buClrTx', '}buFontTx')):
+                            pPr.remove(child)
+
+                    # Determine bullet character based on level
+                    if level == 0:
+                        char = "❖"
+                        typeface = "Noto Sans Symbols"
+                    elif level == 1:
+                        char = "-"
+                        typeface = "Arial"
+                    elif level == 2:
+                        char = "▪"
+                        typeface = "Arial"
+                    else:
+                        char = "•"
+                        typeface = "Arial"
+
+                    pPr.insert(0, parse_xml(f'<a:buChar char="{char}" xmlns:a="{a_ns}"/>'))
+                    pPr.insert(0, parse_xml(f'<a:buFont typeface="{typeface}" xmlns:a="{a_ns}"/>'))
+                    
+                    # Set proper hanging indent using margins
+                    if level == 0:
+                        indent_val = 731520  # 0.8 inches padding for level 0
+                        marL_val = 731520
+                    else:
+                        indent_val = 457200  # 0.5 inches padding for sub-bullets
+                        marL_val = 731520 + (level * 457200)
+
+                    pPr.set('marL', str(marL_val))
+                    pPr.set('indent', str(-indent_val))
+
 
             # Aggressively clear existing runs and fields in the paragraph XML
             for r_elem in p._p.findall('.//a:r', namespaces=p._p.nsmap):
@@ -586,11 +655,15 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
             
             # parts can be a list of math/text chunks OR a single string
             parts = para_data if isinstance(para_data, list) else [{'type': 'text', 'value': str(para_data)}]
-        
             # Layouts that should have bold text colored yellow (#FFC000)
             yellow_bold_layouts = [
                 'LAYOUT_sst_lo_page', 'LAYOUT_sst_summary_page', 'LAYOUT_sst_previous_page',
                 'LAYOUT_math_lo_page', 'LAYOUT_math_summary_page'
+            ]
+            
+            # Layouts that should have bold text colored cyan (#00FFFF)
+            cyan_bold_layouts = [
+                'LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02'
             ]
 
             for part in parts:
@@ -615,6 +688,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     # Color logic: overrides layout specific bold color, then parameter font_color, then template
                     if part_bold and layout_name in yellow_bold_layouts:
                         new_run.font.color.rgb = RGBColor(255, 192, 0) # #FFC000
+                    elif part_bold and layout_name in cyan_bold_layouts:
+                        new_run.font.color.rgb = RGBColor(0, 255, 255) # #00FFFF
                     elif font_color is not None:
                         new_run.font.color.rgb = font_color
                     else:
@@ -648,7 +723,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                         
                     # Priority: Subtopic (must check before topic because 'topic' is in 'subtopic')
                     if 'subtopic' in cleaned_txt:
-                        if 'topic' in cleaned_txt:
+                        txt_low = shape.text.lower()
+                        if 'topic' in txt_low.replace('subtopic', ''):
                             # Combined placeholder: Topic Name - Subtopic Name
                             topic_val = merged_data.get('topic', '')
                             subtopic_val = merged_data.get('subtopic', '')
@@ -663,10 +739,10 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                             replace_text_preserve_format(shape, val, center=True, layout_name=slide.slide_layout.name)
                             tf = shape.text_frame
                             tf.word_wrap = False
-                            # Estimate required width (220k EMUs per char is very tight for Calibri)
+                            # Estimate required width (250k EMUs per char)
                             # Add just enough padding for the diagonal corners
-                            text_width = len(str(val).strip()) * 220000
-                            padding = 500000  # Tight padding for shape geometry
+                            text_width = len(str(val).strip()) * 250000
+                            padding = 800000  # Generous padding for shape geometry
                             required_width = text_width + padding
                             
                             # Ensure we don't shrink the shape below its original template size
@@ -679,8 +755,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                                 tf.word_wrap = True  # Allow wrap if it's truly massive
                             
                             # Set text frame margins to give text space within the shape
-                            tf.margin_left = int(padding / 4)
-                            tf.margin_right = int(padding / 4)
+                            tf.margin_left = int(padding / 2.5)
+                            tf.margin_right = int(padding / 2.5)
                             tf.margin_top = Pt(4)
                             tf.margin_bottom = Pt(4)
                             
@@ -765,9 +841,9 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
             continue
         
         slide = prs.slides.add_slide(layout)
-
-    
-    
+        
+        # Inject the captured logo elements to every slide
+        # inject_logo(slide)
         if section['name'].replace("_", "").lower() in ('mathpagetitle', 'mathtitlepage', 'sstpagetitle', 'ssttitlepage'):
             data = {}
             for entry in section['content']:
@@ -1091,6 +1167,7 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
             for entry in section['content']:
                 content_obj = entry[0] if isinstance(entry, tuple) else entry
                 ilvl = entry[1] if isinstance(entry, tuple) else 0
+                is_list = entry[2] if (isinstance(entry, tuple) and len(entry) > 2) else False
             
                 if isinstance(content_obj, list):
                     # For parsing Topic/Subtopic, we need the plain text
@@ -1114,11 +1191,11 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     elif 'topic' in key or key.startswith('topic'):
                         data['topic'] = val
                     elif key == 'text':
-                        data_text_list.append((content_obj, ilvl))
+                        data_text_list.append((content_obj, ilvl, is_list))
                     else:
-                        data_text_list.append((content_obj, ilvl))
+                        data_text_list.append((content_obj, ilvl, is_list))
                 elif line.strip():
-                    data_text_list.append((content_obj, ilvl))
+                    data_text_list.append((content_obj, ilvl, is_list))
                 
             # Fallback to global metadata
             if 'topic' not in data and global_metadata.get('topic'):
@@ -1187,14 +1264,14 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     for idx, shape in enumerate(text_shapes):
                         chunk = paragraphs[idx * chunk_size : (idx + 1) * chunk_size]
                         if chunk:
-                            replace_text_preserve_format(shape, chunk)
+                            replace_text_preserve_format(shape, chunk, layout_name=layout.name, is_body_text=True)
                         else:
-                            replace_text_preserve_format(shape, "")
+                            replace_text_preserve_format(shape, "", layout_name=layout.name, is_body_text=True)
                 else:
                     # Only one text shape or one paragraph, put everything in the first shape and clear others
-                    replace_text_preserve_format(text_shapes[0], paragraphs)
+                    replace_text_preserve_format(text_shapes[0], paragraphs, layout_name=layout.name, is_body_text=True)
                     for shape in text_shapes[1:]:
-                        replace_text_preserve_format(shape, "")
+                        replace_text_preserve_format(shape, "", layout_name=layout.name, is_body_text=True)
             elif 'text' in data:
                 pass # No matching placeholders found for the provided text
 

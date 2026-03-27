@@ -141,3 +141,5 @@ You can add special floating elements to slides using these markers:
 1. **Bullet Points**: Use standard bullet points in Word (`•` or `-`). Indenting them in Word (Tab) will preserve the nesting levels in PowerPoint.
 2. **Bold/Italics**: Basic formatting is preserved in many placeholders.
 3. **No Stretch**: Images are always scaled to "fit" their area without being stretched or distorted.
+
+

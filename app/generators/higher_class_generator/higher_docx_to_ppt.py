@@ -338,11 +338,20 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
 
         if isinstance(item, Paragraph):
             ilvl = 0
+            is_list = False
             numPr = item._element.find(f'.//{{{w_ns}}}numPr')
             if numPr is not None:
+                is_list = True
                 ilvl_elem = numPr.find(f'{{{w_ns}}}ilvl')
                 if ilvl_elem is not None:
                     ilvl = int(ilvl_elem.get(f'{{{w_ns}}}val', '0'))
+            else:
+                if item.style and item.style.name and ('List' in item.style.name or 'Bullet' in item.style.name):
+                    is_list = True
+                    import re as _re
+                    m = _re.search(r'\d+', item.style.name)
+                    if m:
+                        ilvl = max(0, int(m.group(0)) - 1)
 
             m_ns = {'m': 'http://schemas.openxmlformats.org/officeDocument/2006/math'}
             parts = []
@@ -376,9 +385,9 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                         parts.append({'type': 'text', 'value': t_elem.text, 'bold': is_bold, 'italic': is_italic})
 
             if not parts:
-                lines_to_process.append((item.text.strip(), ilvl))
+                lines_to_process.append((item.text.strip(), ilvl, is_list))
             else:
-                lines_to_process.append((parts, ilvl))
+                lines_to_process.append((parts, ilvl, is_list))
 
             for run in item.runs:
                 for drawing in run._element.findall('.//w:drawing', namespaces=run._element.nsmap):
@@ -488,10 +497,24 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                 p.space_before = Pt(12)
 
             level = 0
+            is_list = False
             if isinstance(para_data, tuple):
                 level = para_data[1]
+                if len(para_data) > 2:
+                    is_list = para_data[2]
                 para_data = para_data[0]
             p.level = level
+
+            if is_list:
+                a_ns = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                pPr = p._p.get_or_add_pPr()
+                for child in list(pPr):
+                    if child.tag.endswith('}buNone') or child.tag.endswith('}buAutoNum') or child.tag.endswith('}buChar') or child.tag.endswith('}buFont'):
+                        pPr.remove(child)
+                from lxml.etree import fromstring as parse_xml
+                char_val = '•' if level == 0 else ('-' if level == 1 else '▪')
+                buChar_xml = f'<a:buChar xmlns:a="{a_ns}" char="{char_val}"/>'
+                pPr.insert(0, parse_xml(buChar_xml))
 
             for r_elem in p._p.findall('.//a:r', namespaces=p._p.nsmap):
                 p._p.remove(r_elem)
@@ -560,7 +583,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                         continue
 
                     if 'subtopic' in cleaned_txt:
-                        if 'topic' in cleaned_txt:
+                        txt_low = shape.text.lower()
+                        if 'topic' in txt_low.replace('subtopic', ''):
                             topic_val = merged_data.get('topic', '')
                             subtopic_val = merged_data.get('subtopic', '')
                             if topic_val and subtopic_val:
@@ -574,8 +598,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                             replace_text_preserve_format(shape, val, center=True, layout_name=slide.slide_layout.name)
                             tf = shape.text_frame
                             tf.word_wrap = False
-                            text_width = len(str(val).strip()) * 220000
-                            padding = 500000
+                            text_width = len(str(val).strip()) * 250000
+                            padding = 800000
                             required_width = text_width + padding
                             if shape.width > 0 and required_width < shape.width:
                                 required_width = shape.width
@@ -583,8 +607,8 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                             if required_width > max_w:
                                 required_width = max_w
                                 tf.word_wrap = True
-                            tf.margin_left = int(padding / 4)
-                            tf.margin_right = int(padding / 4)
+                            tf.margin_left = int(padding / 2.5)
+                            tf.margin_right = int(padding / 2.5)
                             tf.margin_top = Pt(4)
                             tf.margin_bottom = Pt(4)
                             if shape.width > 0:
@@ -984,6 +1008,7 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
             for entry in section['content']:
                 content_obj = entry[0] if isinstance(entry, tuple) else entry
                 ilvl = entry[1] if isinstance(entry, tuple) else 0
+                is_list = entry[2] if (isinstance(entry, tuple) and len(entry) > 2) else False
                 if isinstance(content_obj, list):
                     line = "".join([p['value'] for p in content_obj if p['type'] == 'text'])
                 else:
@@ -995,7 +1020,7 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                 elif line_low.startswith('subtopic:'):
                     data['subtopic'] = line.split(':', 1)[1].strip()
                 elif line.strip():
-                    data_text_list.append((content_obj, ilvl))
+                    data_text_list.append((content_obj, ilvl, is_list))
 
             if 'topic' not in data and global_metadata.get('topic'):
                 data['topic'] = global_metadata['topic']

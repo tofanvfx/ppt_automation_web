@@ -757,6 +757,14 @@
         .feature-selector.visible {
             display: grid;
         }
+
+        .sub-selector-container {
+            display: none;
+        }
+
+        .sub-selector-container.visible {
+            display: block;
+        }
         
         .feature-card {
             background: rgba(255, 255, 255, 0.03);
@@ -826,7 +834,87 @@
             from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        /* Dual Upload layout */
+        .dual-upload {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 10px;
+        }
+
+        .mini-drop-zone {
+            border: 2px dashed var(--border-subtle);
+            border-radius: 12px;
+            padding: 24px 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.02);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 120px;
+        }
+
+        .mini-drop-zone:hover {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+        }
+
+        .mini-drop-zone.has-file {
+            border-color: var(--success);
+            background: var(--success-glow);
+        }
+
+        .mini-drop-zone h4 {
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+            color: var(--text-primary);
+        }
+
+        .mini-drop-zone p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .mini-drop-zone .btn-clear-mini {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-muted);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .mini-drop-zone.has-file .btn-clear-mini {
+            display: flex;
+        }
+
+        .mini-drop-zone .btn-clear-mini:hover {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .mini-drop-zone .btn-clear-mini svg {
+            width: 12px;
+            height: 12px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2.5;
+        }
     </style>
+
 </head>
 <body>
     <!-- Top bar (user info + logout) -->
@@ -893,20 +981,26 @@
             </div>
 
             <!-- PPT Sub-Selection State -->
-            <div class="feature-selector" id="pptSubSelector">
-                <div class="feature-card" id="btnSelectPPTLower">
-                    <div class="feature-card-icon">
-                        <svg viewBox="0 0 24 24"><path d="M3 4h18v16H3z"/><path d="M8 14h8M8 10h8" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+            <div class="sub-selector-container" id="pptSubSelector">
+                <button class="btn-new" id="btnBackFromSub" style="margin: 0 0 20px 0; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px;">
+                    <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2;"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    Back to Menu
+                </button>
+                <div class="feature-selector" style="display: grid; margin-top: 0;">
+                    <div class="feature-card" id="btnSelectPPTLower">
+                        <div class="feature-card-icon">
+                            <svg viewBox="0 0 24 24"><path d="M3 4h18v16H3z"/><path d="M8 14h8M8 10h8" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                        </div>
+                        <div class="feature-card-title">Lower Class</div>
+                        <div class="feature-card-desc">Generate PPT for Lower Classes</div>
                     </div>
-                    <div class="feature-card-title">Lower Class</div>
-                    <div class="feature-card-desc">Generate PPT for Lower Classes</div>
-                </div>
-                <div class="feature-card" id="btnSelectPPTHigher">
-                    <div class="feature-card-icon">
-                        <svg viewBox="0 0 24 24"><path d="M3 4h18v16H3z"/><path d="M6 10h12M6 14h12" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                    <div class="feature-card" id="btnSelectPPTHigher">
+                        <div class="feature-card-icon">
+                            <svg viewBox="0 0 24 24"><path d="M3 4h18v16H3z"/><path d="M6 10h12M6 14h12" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                        </div>
+                        <div class="feature-card-title">Higher Class</div>
+                        <div class="feature-card-desc">Generate PPT for Higher Classes</div>
                     </div>
-                    <div class="feature-card-title">Higher Class</div>
-                    <div class="feature-card-desc">Generate PPT for Higher Classes</div>
                 </div>
             </div>
 
@@ -928,18 +1022,22 @@
                     <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2;"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     Back to Menu
                 </button>
-                <div class="drop-zone" id="dropZone">
-                    <div class="drop-zone-content">
-                        <div class="upload-icon">
-                            <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                
+                <!-- Single file drop zone (default) -->
+                <div id="singleUploadArea">
+                    <div class="drop-zone" id="dropZone">
+                        <div class="drop-zone-content">
+                            <div class="upload-icon">
+                                <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0l-4 4m4-4l4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </div>
+                            <p class="drop-text" id="dropText"><strong>Click to upload</strong> or drag and drop</p>
+                            <p class="drop-hint" id="dropHint">.docx files only</p>
                         </div>
-                        <p class="drop-text"><strong>Click to upload</strong> or drag and drop</p>
-                        <p class="drop-hint">.docx files only</p>
                     </div>
+                    <input type="file" id="fileInput" class="file-input" multiple>
                 </div>
 
-                <input type="file" id="fileInput" class="file-input" accept=".docx" multiple>
-
+                </div>
                 <div class="file-info" id="fileInfo">
                     <div class="file-icon">
                         <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6" fill="none" stroke="white" stroke-width="1.5"/></svg>
@@ -1018,7 +1116,10 @@
         const mainTitle = document.querySelector('h1');
         const mainSubtitle = document.querySelector('.subtitle');
 
-        let currentFeature = 'ppt'; // 'ppt' or 'worksheet'
+        const singleUploadArea = document.getElementById('singleUploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        let currentFeature = 'ppt'; // 'ppt_lower', 'ppt_higher', 'worksheet'
 
         function hideAllStates() {
             elLoading.classList.remove('visible');
@@ -1038,6 +1139,8 @@
             if (!token) {
                 elLogin.classList.add('visible');
                 topBar.style.display = 'none';
+                mainTitle.textContent = 'PPT Automation';
+                mainSubtitle.textContent = 'Upload your DOCX file and get a styled presentation';
                 return;
             }
 
@@ -1158,28 +1261,59 @@
             startUploadFlow();
         });
 
+        document.getElementById('btnBackFromSub').addEventListener('click', () => {
+            checkAuth(); // Go back to feature selection
+        });
+
         function startUploadFlow() {
             hideAllStates();
             elUpload.style.display = 'block';
+            const dropText = document.getElementById('dropText');
+            const dropHint = document.getElementById('dropHint');
             
-            if (currentFeature === 'ppt_lower') {
-                mainTitle.textContent = 'Lower Class Generator';
-                mainSubtitle.textContent = 'Upload your DOCX file for a lower class presentation';
-                btnGenerate.textContent = 'Generate Presentation';
-            } else if (currentFeature === 'ppt_higher') {
-                mainTitle.textContent = 'Higher Class Generator';
-                mainSubtitle.textContent = 'Upload your DOCX file for a higher class presentation';
-                btnGenerate.textContent = 'Generate Presentation';
+            // Toggle areas
+            if (currentFeature === 'trans_import') {
+                singleUploadArea.style.display = 'none';
+                dualUploadArea.style.display = 'grid';
+                mainTitle.textContent = 'Import Translation';
+                mainSubtitle.textContent = 'Upload both your original PPTX and the translated JSON';
+
+                btnGenerate.textContent = 'Update PowerPoint';
+                fileInfo.classList.remove('visible');
+                btnGenerate.classList.remove('visible');
+                resetDualFiles();
             } else {
-                mainTitle.textContent = 'Worksheet Generator';
-                mainSubtitle.textContent = 'Upload DOCX to generate a 2-column PPT worksheet';
-                btnGenerate.textContent = 'Generate Worksheet';
+                singleUploadArea.style.display = 'block';
+                dualUploadArea.style.display = 'none';
+                resetSingleFiles();
+                
+                if (currentFeature === 'ppt_lower') {
+                    mainTitle.textContent = 'Lower Class Generator';
+                    mainSubtitle.textContent = 'Upload your DOCX file for a lower class presentation';
+                    btnGenerate.textContent = 'Generate Presentation';
+                    dropHint.textContent = '.docx files only';
+                } else if (currentFeature === 'ppt_higher') {
+                    mainTitle.textContent = 'Higher Class Generator';
+                    mainSubtitle.textContent = 'Upload your DOCX file for a higher class presentation';
+                    btnGenerate.textContent = 'Generate Presentation';
+                    dropHint.textContent = '.docx files only';
+                } else if (currentFeature === 'worksheet') {
+                    mainTitle.textContent = 'Worksheet Generator';
+                    mainSubtitle.textContent = 'Upload DOCX to generate a 2-column PPT worksheet';
+                    btnGenerate.textContent = 'Generate Worksheet';
+                    dropHint.textContent = '.docx files only';
+                } else if (currentFeature === 'trans_export') {
+                    mainTitle.textContent = 'Export for Translation';
+                    mainSubtitle.textContent = 'Upload your PPTX file to export text to JSON';
+                    btnGenerate.textContent = 'Export to JSON';
+                    dropHint.textContent = '.pptx files only';
+                }
+
             }
         }
 
         // ── Upload Logic ────────────────────────────────────────────────────
         const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
         const fileInfo = document.getElementById('fileInfo');
         const fileName = document.getElementById('fileName');
         const fileSize = document.getElementById('fileSize');
@@ -1208,17 +1342,10 @@
         }
 
         function setFiles(filesList) {
-            if (!filesList || filesList.length === 0) return;
+            let filteredFiles = Array.from(filesList).filter(f => f.name.toLowerCase().endsWith('.docx'));
+            if (filteredFiles.length === 0) return showUploadError('Please select at least one .docx file');
             
-            // Filter to only docx files
-            const docxFiles = Array.from(filesList).filter(f => f.name.toLowerCase().endsWith('.docx'));
-            
-            if (docxFiles.length === 0) {
-                showUploadError('Please select at least one .docx file');
-                return;
-            }
-            
-            selectedFiles = docxFiles;
+            selectedFiles = filteredFiles;
             
             if (selectedFiles.length === 1) {
                 fileName.textContent = selectedFiles[0].name;
@@ -1234,7 +1361,7 @@
             uploadError.classList.remove('visible');
         }
 
-        function clearFiles() {
+        function resetSingleFiles() {
             selectedFiles = [];
             fileInput.value = '';
             fileInfo.classList.remove('visible');
@@ -1243,11 +1370,18 @@
 
         // Back to Menu Button
         document.getElementById('btnBackToMenu').addEventListener('click', () => {
-            clearFiles();
-            checkAuth(); // Go back to feature selection
+            resetSingleFiles();
+            if (currentFeature === 'ppt_lower' || currentFeature === 'ppt_higher') {
+                hideAllStates();
+                pptSubSelector.classList.add('visible');
+                mainTitle.textContent = 'Select Class Level';
+                mainSubtitle.textContent = 'Choose between Lower Class or Higher Class PPT generation';
+            } else {
+                checkAuth(); // Go back to feature selection
+            }
         });
 
-        // Drop zone events
+        // Drop zone events (single)
         dropZone.addEventListener('click', () => fileInput.click());
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -1264,16 +1398,13 @@
         });
         fileRemove.addEventListener('click', (e) => {
             e.stopPropagation();
-            clearFiles();
+            resetSingleFiles();
         });
 
         // Generate button — sends files with Bearer token
         btnGenerate.addEventListener('click', async () => {
             const token = getToken();
-            if (selectedFiles.length === 0 || !token) {
-                checkAuth();
-                return;
-            }
+            if (!token) return checkAuth();
 
             elUpload.style.display = 'none';
             processingState.classList.add('visible');
@@ -1285,43 +1416,38 @@
             const elStatus = document.getElementById('progressStatus');
             elFill.style.width = '0%';
             elPercent.textContent = '0%';
-            elStatus.textContent = 'Preparing...';
-
-            // Generate unique job_id for tracking
-            const jobId = Math.random().toString(36).substring(2, 10);
-            
-            // Start listening for progress via SSE
-            const eventSource = new EventSource(`/progress/${jobId}`);
-            eventSource.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    elFill.style.width = data.percentage + '%';
-                    elPercent.textContent = data.percentage + '%';
-                    elStatus.textContent = data.status;
-                    
-                    if (data.percentage >= 100) {
-                        eventSource.close();
-                    }
-                } catch (e) {
-                    console.error('Error parsing progress data', e);
-                }
-            };
-            eventSource.onerror = (e) => {
-                console.error('SSE Error', e);
-                eventSource.close();
-            };
+            elStatus.textContent = 'Processing...';
 
             const formData = new FormData();
-            formData.append('job_id', jobId);
-            selectedFiles.forEach(file => {
-                formData.append('files', file);
-            });
+            let endpoint = '';
+            let progressTracking = true;
+
+            if (currentFeature === 'ppt_lower') endpoint = '/upload-lower';
+            else if (currentFeature === 'ppt_higher') endpoint = '/upload-higher';
+            else if (currentFeature === 'worksheet') endpoint = '/upload-worksheet';
+
+            if (progressTracking) {
+                const jobId = Math.random().toString(36).substring(2, 10);
+                formData.append('job_id', jobId);
+                selectedFiles.forEach(file => formData.append('files', file));
+                
+                const eventSource = new EventSource(`/progress/${jobId}`);
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        elFill.style.width = data.percentage + '%';
+                        elPercent.textContent = data.percentage + '%';
+                        elStatus.textContent = data.status;
+                        if (data.percentage >= 100) eventSource.close();
+                    } catch (e) { eventSource.close(); }
+                };
+            } else {
+                elFill.style.width = '50%';
+                elPercent.textContent = '...';
+                elStatus.textContent = 'Communicating with server...';
+            }
 
             try {
-                let endpoint = '/upload-worksheet';
-                if (currentFeature === 'ppt_lower') endpoint = '/upload-lower';
-                else if (currentFeature === 'ppt_higher') endpoint = '/upload-higher';
-                
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Authorization': 'Bearer ' + token },
@@ -1329,38 +1455,29 @@
                 });
 
                 if (response.status === 401) {
-                    eventSource.close();
                     clearToken();
                     checkAuth();
                     return;
                 }
 
-                if (response.status === 403) {
-                    eventSource.close();
-                    processingState.classList.remove('visible');
-                    elUpload.style.display = 'block';
-                    showUploadError('Access denied. You need the ppt_generator or admin role.');
-                    return;
-                }
-
                 if (!response.ok) {
-                    eventSource.close();
                     const data = await response.json().catch(() => null);
                     throw new Error(data?.detail || `Server error (${response.status})`);
                 }
 
                 const blob = await response.blob();
-                let downloadName;
-                if (currentFeature.startsWith('ppt')) {
-                    downloadName = selectedFiles.length > 1 ? 'Generated_Presentations.zip' : 'Generated_Presentation.pptx';
-                } else {
-                    downloadName = selectedFiles.length > 1 ? 'Generated_Worksheets.zip' : 'Generated_Worksheet.pptx';
-                }
+                let downloadName = 'Result.pptx';
+                
                 const disposition = response.headers.get('Content-Disposition');
                 if (disposition) {
                     const match = disposition.match(/filename[^;=\n]*=(?:(['"]).*?\1|([^;\n]*))/);
-                    if (match) downloadName = (match[2] || match[1] || '').replace(/['"]/g, '');
+                    if (match) {
+                        downloadName = (match[2] || match[1] || '').replace(/['"]/g, '');
+                        // If it's a URL-encoded filename (like filename*=UTF-8''...)
+                        if (downloadName.includes("''")) downloadName = decodeURIComponent(downloadName.split("''")[1]);
+                    }
                 }
+
 
                 if (downloadUrl) URL.revokeObjectURL(downloadUrl);
                 downloadUrl = URL.createObjectURL(blob);
@@ -1381,7 +1498,7 @@
         });
 
         btnNew.addEventListener('click', () => {
-            clearFiles();
+            resetSingleFiles();
             successState.classList.remove('visible');
             checkAuth(); // Go back to feature selection
             if (downloadUrl) {
