@@ -536,9 +536,26 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
     report_progress(10, "Document parsed. Generating slides...")
 
     def replace_text_preserve_format(shape, new_text, center=False, font_color=None, layout_name=None, is_body_text=False):
-        if not shape.has_text_frame:
+        # If shape is a group, find the sub-shape that contains the text frame
+        target_shape = shape
+        if shape.shape_type == 6: # msoGroup
+            for sub in shape.shapes:
+                if getattr(sub, 'has_text_frame', False):
+                    # For activity/content, we look for the one that usually has the placeholder
+                    if 'text goes here' in sub.text.lower() or 'click to edit' in sub.text.lower() or 'question goes here' in sub.text.lower():
+                        target_shape = sub
+                        break
+            # Fallback to the first text-bearing shape if no placeholder match
+            if target_shape == shape:
+                for sub in shape.shapes:
+                    if getattr(sub, 'has_text_frame', False):
+                        target_shape = sub
+                        break
+        
+        if not target_shape or not getattr(target_shape, 'has_text_frame', False):
             return
-        tf = shape.text_frame
+        
+        tf = target_shape.text_frame
         if not tf.paragraphs or not tf.paragraphs[0].runs:
             if isinstance(new_text, list):
                 shape.text = "\n".join([str(t[0] if isinstance(t, tuple) else t) for t in new_text])
@@ -602,9 +619,10 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                 p._p.insert(0, pPr)
 
             is_sst_content = is_body_text and layout_name in ('LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02')
+            is_sst_activity = is_body_text and layout_name in ('LAYOUT_sst_activity_page_01', 'LAYOUT_sst_activity_page_02')
             
-            if is_sst_content:
-                # User wants any paragraph in sst_content_page body to be a bullet
+            if is_sst_content or (is_sst_activity and i > 0):
+                # User wants any paragraph in sst_content_page body OR any sub-paragraph (i>0) in activity to be a bullet
                 is_list = True
 
                 if True:
@@ -661,7 +679,7 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                 'LAYOUT_math_lo_page', 'LAYOUT_math_summary_page'
             ]
             
-            # Layouts that should have bold text colored cyan (#00FFFF)
+            # Layouts that should have bold text colored cyan (#CCFF33)
             cyan_bold_layouts = [
                 'LAYOUT_sst_content_page_01', '1_LAYOUT_sst_content_page_01', 'LAYOUT_sst_content_page_02'
             ]
@@ -676,27 +694,32 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     
                     # Apply bold/italic if explicitly set in the part, otherwise fallback to template font style
                     part_bold = part.get('bold', False)
-                    if part_bold or bold is not None: 
-                        new_run.font.bold = part_bold or bold
-                    
-                    part_italic = part.get('italic', False)
-                    if part_italic or italic is not None: 
-                        new_run.font.italic = part_italic or italic
-                        
-                    if underline is not None: new_run.font.underline = underline
-                
-                    # Color logic: overrides layout specific bold color, then parameter font_color, then template
-                    if part_bold and layout_name in yellow_bold_layouts:
-                        new_run.font.color.rgb = RGBColor(255, 192, 0) # #FFC000
-                    elif part_bold and layout_name in cyan_bold_layouts:
-                        new_run.font.color.rgb = RGBColor(0, 255, 255) # #00FFFF
-                    elif font_color is not None:
-                        new_run.font.color.rgb = font_color
+                    # Color and Weight logic: if bold in docx -> check layout rules
+                    if part_bold and layout_name in cyan_bold_layouts:
+                        new_run.font.bold = False  # DO NOT bold in content pages
+                        new_run.font.color.rgb = RGBColor(204, 255, 51) # Bright Lime (#CCFF33)
+                    elif part_bold and layout_name in yellow_bold_layouts:
+                        new_run.font.bold = True  # KEEP bold in LO/Summary/Previous
+                        new_run.font.color.rgb = RGBColor(255, 192, 0) # Yellow (#FFC000)
                     else:
-                        if color_rgb is not None:
-                            new_run.font.color.rgb = color_rgb
-                        elif color_theme is not None:
-                            new_run.font.color.theme_color = color_theme
+                        # Default weight/bold logic
+                        if part_bold or bold is not None: 
+                            new_run.font.bold = part_bold or bold
+                        
+                        part_italic = part.get('italic', False)
+                        if part_italic or italic is not None: 
+                            new_run.font.italic = part_italic or italic
+                            
+                        if underline is not None: new_run.font.underline = underline
+                    
+                        # Default color logic (param -> template)
+                        if font_color is not None:
+                            new_run.font.color.rgb = font_color
+                        else:
+                            if color_rgb is not None:
+                                new_run.font.color.rgb = color_rgb
+                            elif color_theme is not None:
+                                new_run.font.color.theme_color = color_theme
                 elif part['type'] == 'math':
                     # Inject OMML XML
                     try:
@@ -1361,8 +1384,9 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     text_elem = copy.deepcopy(text_xmls[0])
                     slide.shapes._spTree.append(text_elem)
                     shape = slide.shapes[-1]
-                # Force black text for activity boxes if they are yellow
-                replace_text_preserve_format(shape, text_content, font_color=RGBColor(0, 0, 0), layout_name=layout.name)
+                # For activity pages, the first line (i=0) is heading, subsequent lines are bullets
+                # We also want to force black text for readability in activity boxes
+                replace_text_preserve_format(shape, text_content, font_color=RGBColor(0, 0, 0), layout_name=layout.name, is_body_text=True)
             
                 # Estimate height needed for 36pt font
                 chars_per_line = max(20, int((shape.width / 914400) * 3.5))
@@ -1384,18 +1408,24 @@ def generate_ppt(docx_path, template_path, output_path, progress_callback=None):
                     shape.height += extra_h
                     new_h = shape.height
                 
-                    # Maintain corner roundness
+                    # Maintain corner roundness (look in sub-shapes if it's a group)
                     ns = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
-                    gd = shape.element.find('.//a:gd[@name="adj"]', namespaces=ns)
-                    if gd is not None:
-                        try:
-                            fmla = gd.get('fmla')
-                            if 'val' in fmla:
-                                old_adj = int(fmla.split()[-1])
-                                new_adj = int(old_adj * (old_h / new_h))
-                                gd.set('fmla', f'val {new_adj}')
-                        except:
-                            pass
+                    
+                    target_elems = [shape.element]
+                    if shape.shape_type == 6: # msoGroup
+                        target_elems.extend([s.element for s in shape.shapes])
+                        
+                    for elem in target_elems:
+                        gd = elem.find('.//a:gd[@name="adj"]', namespaces=ns)
+                        if gd is not None:
+                            try:
+                                fmla = gd.get('fmla')
+                                if 'val' in fmla:
+                                    old_adj = int(fmla.split()[-1])
+                                    new_adj = int(old_adj * (old_h / new_h))
+                                    gd.set('fmla', f'val {new_adj}')
+                            except:
+                                pass
                 
                     # Move everything below it down (e.g. discussion group)
                     for other_shape in slide.shapes:

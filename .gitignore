@@ -46,3 +46,5 @@ layouts.txt
 temp_uploads/
 users.db
 temp_refactor.py
+!reference/
+!reference/**
